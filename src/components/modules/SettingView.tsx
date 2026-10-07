@@ -9,17 +9,27 @@ import { Settings, Trash2, RotateCcw, ShieldAlert, History, Globe, HardDrive } f
 interface Props {
   profile: UserProfile;
   lang: Language;
-  setLang: (l: Language) => void;
+  onLogout: () => void;
 }
 
-export const SettingView: React.FC<Props> = ({ profile, lang, setLang }) => {
+export const SettingView: React.FC<Props> = ({ profile, lang, onLogout }) => {
   const t = translations[lang];
   const [deletedItems, setDeletedItems] = useState<DeletedRecordItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'trash' | 'audit' | 'general'>('trash');
+  const [activeTab, setActiveTab] = useState<'trash' | 'audit' | 'general' | 'branding'>('trash');
+  const [logoUrl, setLogoUrl] = useState<string>('');
+  const [logoSize, setLogoSize] = useState<number>(80);
+  const [isSavingLogo, setIsSavingLogo] = useState(false);
 
   useEffect(() => {
-    // 1. Fetch Recycle Bin
+    // Fetch branding config
+    const unsubBranding = onSnapshot(doc(db, 'config', 'branding'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setLogoUrl(data.logoUrl || '');
+        setLogoSize(data.logoSize || 80);
+      }
+    });
     const qTrash = query(collection(db, 'deleted_records'));
     const unsubTrash = onSnapshot(qTrash, (snap) => {
       const list: DeletedRecordItem[] = [];
@@ -27,22 +37,68 @@ export const SettingView: React.FC<Props> = ({ profile, lang, setLang }) => {
       setDeletedItems(list);
     });
 
-    // 2. Fetch Audit Logs
     const qAudit = query(collection(db, 'audit_logs'));
     const unsubAudit = onSnapshot(qAudit, (snap) => {
       const list: AuditLogItem[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as AuditLogItem));
-      setAuditLogs(list.reverse()); // latest first
+      setAuditLogs(list.reverse());
     });
 
     return () => {
       unsubTrash();
       unsubAudit();
+      unsubBranding();
     };
   }, []);
 
+  const saveLogoConfig = async (newUrl: string, newSize: number) => {
+    setIsSavingLogo(true);
+    try {
+      await updateDoc(doc(db, 'config', 'branding'), {
+        logoUrl: newUrl,
+        logoSize: newSize,
+        updatedAt: new Date().toISOString(),
+        updatedBy: profile.uid
+      }).catch(async () => {
+        const { setDoc } = await import('firebase/firestore');
+        await setDoc(doc(db, 'config', 'branding'), {
+          logoUrl: newUrl,
+          logoSize: newSize,
+          updatedAt: new Date().toISOString(),
+          updatedBy: profile.uid
+        });
+      });
+    } catch (err) {
+      console.error('Logo config save failed:', err);
+    } finally {
+      setIsSavingLogo(false);
+    }
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result as string;
+        setLogoUrl(base64);
+        saveLogoConfig(base64, logoSize);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newSize = parseInt(e.target.value);
+    setLogoSize(newSize);
+  };
+
+  const handleSizeSave = () => {
+    saveLogoConfig(logoUrl, logoSize);
+  };
+
   const handleRestore = async (item: DeletedRecordItem) => {
-    if (window.confirm('हा डेटा पुन्हा रिस्टोअर (पुनर्प्राप्त) करायचा का?')) {
+    if (window.confirm('Restore this record?')) {
       await restoreRecord(item, profile);
     }
   };
@@ -53,50 +109,40 @@ export const SettingView: React.FC<Props> = ({ profile, lang, setLang }) => {
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <Settings className="w-6 h-6 text-slate-700" />
-            {t.setting} & डेटा रिकव्हरी
+            {t.setting} & Data Recovery
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5">रिसायकल बिन, ऑडिट लॉग्स आणि भाषा सेटिंग्ज</p>
-        </div>
-
-        {/* Language switch */}
-        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
-          <button
-            onClick={() => setLang('mr')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${lang === 'mr' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
-          >
-            मराठी
-          </button>
-          <button
-            onClick={() => setLang('en')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${lang === 'en' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
-          >
-            English
-          </button>
+          <p className="text-xs text-slate-500 mt-0.5">Recycle bin, audit logs and system settings</p>
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-2 border-b border-slate-200 pb-2">
         <button
           onClick={() => setActiveTab('trash')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'trash' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
         >
           <Trash2 className="w-4 h-4" />
-          <span>रिसायकल बिन (Trash: {deletedItems.length})</span>
+          <span>Recycle Bin ({deletedItems.length})</span>
         </button>
         <button
           onClick={() => setActiveTab('audit')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'audit' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
         >
           <History className="w-4 h-4" />
-          <span>ऑडिट लॉग्स ({auditLogs.length})</span>
+          <span>Audit Logs ({auditLogs.length})</span>
         </button>
         <button
           onClick={() => setActiveTab('general')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'general' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
         >
           <HardDrive className="w-4 h-4" />
-          <span>स्टोरेज व सिंक</span>
+          <span>Storage & Sync</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('branding')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'branding' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
+        >
+          <Globe className="w-4 h-4" />
+          <span>Branding</span>
         </button>
       </div>
 
@@ -104,14 +150,13 @@ export const SettingView: React.FC<Props> = ({ profile, lang, setLang }) => {
         <div className="space-y-4">
           <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-xs text-amber-900">
             <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
-            <span>चुकीने डिलीट झालेला कोणताही डेटा येथे सुरक्षित असतो. कधीही 'रिस्टोअर' बटनावर क्लिक करून तो पुन्हा सक्रिय करू शकता.</span>
+            <span>Any data deleted by mistake is safe here. Click 'Restore' to reactivate it.</span>
           </div>
 
           {deletedItems.length === 0 ? (
             <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
               <Trash2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-sm font-semibold text-slate-700">रिसायकल बिन रिकामी आहे</p>
-              <p className="text-xs text-slate-400 mt-1">कोणताही डेटा डिलीट केलेला नाही.</p>
+              <p className="text-sm font-semibold text-slate-700">Recycle Bin is empty</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3">
@@ -124,14 +169,14 @@ export const SettingView: React.FC<Props> = ({ profile, lang, setLang }) => {
                     <h4 className="text-sm font-bold text-slate-900 mt-1">
                       {item.data.name || item.data.shopName || item.data.title || item.originalRecordId}
                     </h4>
-                    <p className="text-[11px] text-slate-400">हटवणारे: {item.deletedByName} ({new Date(item.deletedAt).toLocaleString()})</p>
+                    <p className="text-[11px] text-slate-400">Deleted by: {item.deletedByName} ({new Date(item.deletedAt).toLocaleString()})</p>
                   </div>
                   <button
                     onClick={() => handleRestore(item)}
                     className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
                   >
                     <RotateCcw className="w-4 h-4" />
-                    <span>रिस्टोअर</span>
+                    <span>Restore</span>
                   </button>
                 </div>
               ))}
@@ -143,7 +188,7 @@ export const SettingView: React.FC<Props> = ({ profile, lang, setLang }) => {
       {activeTab === 'audit' && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="p-4 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-700">
-            सिस्टम ऑपरेशन्स ऑडिट ट्रेल (System Audit History)
+            System Audit History
           </div>
           <div className="divide-y divide-slate-100 max-h-[60vh] overflow-y-auto text-xs">
             {auditLogs.map(log => (
@@ -160,7 +205,7 @@ export const SettingView: React.FC<Props> = ({ profile, lang, setLang }) => {
                     <span className="font-bold text-slate-800">{log.collection}</span>
                   </div>
                   <p className="text-slate-600 mt-1">{log.recordSummary}</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">द्वारे: {log.performedByName}</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">By: {log.performedByName}</p>
                 </div>
                 <span className="text-[11px] text-slate-400 shrink-0">{new Date(log.timestamp).toLocaleString()}</span>
               </div>
@@ -171,15 +216,74 @@ export const SettingView: React.FC<Props> = ({ profile, lang, setLang }) => {
 
       {activeTab === 'general' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 text-xs">
-          <h3 className="text-sm font-bold text-slate-900">सिस्टम आणि डेटाबेस माहिती</h3>
+          <h3 className="text-sm font-bold text-slate-900">System Information</h3>
           <div className="grid grid-cols-2 gap-4">
             <div className="p-4 bg-slate-50 rounded-xl space-y-1">
-              <span className="text-slate-400 block">फायरस्टोअर डेटाबेस</span>
-              <span className="font-bold text-slate-800">ai-studio-coresyncbusiness</span>
+              <span className="text-slate-400 block">Database</span>
+              <span className="font-bold text-slate-800 font-mono">Firestore (Sync Active)</span>
             </div>
             <div className="p-4 bg-slate-50 rounded-xl space-y-1">
-              <span className="text-slate-400 block">रिअल-टाइम सिंक</span>
-              <span className="font-bold text-emerald-600">सक्रिय (Active across all devices)</span>
+              <span className="text-slate-400 block">Status</span>
+              <span className="font-bold text-emerald-600 font-mono">ONLINE</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'branding' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-6 text-xs">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Company Branding</h3>
+            <p className="text-[11px] text-slate-500">Update your company logo for forms and letterheads</p>
+          </div>
+
+          <div className="flex flex-col items-center gap-4 p-8 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+            <div className="w-48 h-48 bg-white rounded-2xl border border-slate-200 shadow-sm flex items-center justify-center overflow-hidden">
+              {logoUrl ? (
+                <img src={logoUrl} alt="Company Logo" style={{ width: `${logoSize}px`, height: `${logoSize}px` }} className="object-contain" />
+              ) : (
+                <Settings className="w-12 h-12 text-slate-200" />
+              )}
+            </div>
+            
+            <div className="w-full max-w-xs space-y-4">
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-slate-700">Logo Size: {logoSize}px</span>
+                  <button 
+                    onClick={handleSizeSave}
+                    className="text-[10px] bg-slate-100 px-2 py-1 rounded font-bold hover:bg-slate-200"
+                  >
+                    Save Size
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min="40"
+                  max="200"
+                  value={logoSize}
+                  onChange={handleSizeChange}
+                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+                />
+              </div>
+
+              <div className="text-center">
+                <input
+                  type="file"
+                  id="logo-upload"
+                  className="hidden"
+                  accept="image/*"
+                  onChange={handleLogoUpload}
+                  disabled={isSavingLogo}
+                />
+                <label
+                  htmlFor="logo-upload"
+                  className={`inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer w-full justify-center ${isSavingLogo ? 'bg-slate-100 text-slate-400' : 'bg-rose-600 text-white hover:bg-rose-700'}`}
+                >
+                  {isSavingLogo ? 'Uploading...' : logoUrl ? 'Change Company Logo' : 'Upload Company Logo'}
+                </label>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-3 uppercase tracking-widest font-bold text-center">Square aspect ratio recommended</p>
             </div>
           </div>
         </div>

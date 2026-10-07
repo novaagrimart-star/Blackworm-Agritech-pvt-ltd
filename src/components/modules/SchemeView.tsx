@@ -13,6 +13,7 @@ interface SchemeItem {
   eligibility: string;
   bonusOffer: string;
   isActive: boolean;
+  isArchived?: boolean;
 }
 
 interface Props {
@@ -37,7 +38,7 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
       const list: SchemeItem[] = [];
       snap.forEach(d => {
         const data = d.data() as SchemeItem;
-        if (!data.isArchived) list.push({ id: d.id, ...data });
+        if (!data.isArchived) list.push({ ...data, id: d.id });
       });
       setSchemes(list);
     });
@@ -54,6 +55,7 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
       eligibility: eligibility.trim(),
       bonusOffer: bonusOffer.trim(),
       isActive: true,
+      isArchived: false,
     };
 
     await setDoc(doc(db, 'schemes', id), newItem);
@@ -70,9 +72,9 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <Gift className="w-6 h-6 text-fuchsia-600" />
-            {t.scheme} (हंगामी योजना व ऑफर्स)
+            Seasonal Schemes & Offers
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5">डीलर्स व शेतकऱ्यांसाठी विशेष सवलत व बोनस ऑफर्स</p>
+          <p className="text-xs text-slate-500 mt-0.5">Special discounts and bonus offers for dealers</p>
         </div>
         {(profile.role === 'admin' || profile.role === 'owner') && (
           <button
@@ -80,7 +82,7 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
             className="flex items-center gap-2 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition shadow-sm"
           >
             <Plus className="w-4 h-4" />
-            <span>नवीन योजना जोडा</span>
+            <span>Add New Scheme</span>
           </button>
         )}
       </div>
@@ -94,8 +96,8 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
             <h3 className="text-base font-bold text-slate-900">{s.title}</h3>
             <p className="text-xs text-slate-600 leading-relaxed">{s.description}</p>
             <div className="bg-fuchsia-50 border border-fuchsia-100 rounded-xl p-3 text-xs text-fuchsia-900 space-y-1">
-              <p><strong>पात्रता:</strong> {s.eligibility}</p>
-              <p><strong>बोनस लाभ:</strong> {s.bonusOffer}</p>
+              <p><strong>Eligibility:</strong> {s.eligibility}</p>
+              <p><strong>Bonus/Benefit:</strong> {s.bonusOffer}</p>
             </div>
           </div>
         ))}
@@ -105,17 +107,17 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-slate-900">नवीन योजना जोडा</h3>
+              <h3 className="text-lg font-bold text-slate-900">Add New Scheme</h3>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
             </div>
 
             <form onSubmit={handleSave} className="space-y-4">
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">योजनेचे शीर्षक *</label>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Scheme Title *</label>
                 <input
                   type="text"
                   required
-                  placeholder="उदा. खरीप बंपर धमाका"
+                  placeholder="e.g. Kharif Bumper Offer"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
@@ -123,11 +125,11 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">वर्णन *</label>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Description *</label>
                 <textarea
                   required
                   rows={3}
-                  placeholder="योजनेची सविस्तर माहिती..."
+                  placeholder="Detailed information about the scheme..."
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
@@ -135,10 +137,10 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">पात्रता अटी</label>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Eligibility Conditions</label>
                 <input
                   type="text"
-                  placeholder="उदा. सर्व नोंदणीकृत डीलर्स"
+                  placeholder="e.g. All registered dealers"
                   value={eligibility}
                   onChange={(e) => setEligibility(e.target.value)}
                   className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
@@ -146,10 +148,10 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">बोनस / लाभ</label>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Bonus / Benefit</label>
                 <input
                   type="text"
-                  placeholder="उदा. 10 बॅग = +1 बॅग मोफत"
+                  placeholder="e.g. 10 bags = +1 bag free"
                   value={bonusOffer}
                   onChange={(e) => setBonusOffer(e.target.value)}
                   className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
@@ -157,8 +159,8 @@ export const SchemeView: React.FC<Props> = ({ profile, lang }) => {
               </div>
 
               <div className="pt-2 flex gap-3">
-                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-2.5 rounded-xl border text-xs font-bold text-slate-600 hover:bg-slate-50">{t.cancel}</button>
-                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-700 text-xs font-bold text-white shadow-sm">{t.save}</button>
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-2.5 rounded-xl border text-xs font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-700 text-xs font-bold text-white shadow-sm">Save Scheme</button>
               </div>
             </form>
           </div>

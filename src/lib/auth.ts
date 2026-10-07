@@ -1,52 +1,32 @@
 import { useEffect, useState } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../firebase';
-
 export interface UserProfile {
   uid: string;
-  name: string;
-  email: string | null;
-  role: 'admin' | 'owner' | 'staff' | 'dealer' | 'farmer';
-  mobile?: string;
-  createdAt: any;
+  fullName: string;
+  emailId: string | null;
+  role: 'admin' | 'owner' | 'staff' | 'dealer' | 'asm' | 'sr_sales_exec' | 'sales_exec' | 'sales_officer' | 'dev_officer' | 'sr_dev_officer' | 'field_officer' | string;
+  mobileNumber?: string;
+  address?: string;
+  center?: string;
+  designation?: string;
+  loginId?: string;
+  password?: string;
+  allowedModules?: string[];
+  createdAt: string;
 }
 
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      
-      if (firebaseUser) {
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        
-        if (userDoc.exists()) {
-          setProfile(userDoc.data() as UserProfile);
-        } else {
-          // Auto-create profile for first-time login
-          const newProfile: UserProfile = {
-            uid: firebaseUser.uid,
-            name: firebaseUser.displayName || 'New User',
-            email: firebaseUser.email,
-            role: 'owner', // Default role for testing
-            createdAt: serverTimestamp(),
-          };
-          await setDoc(userDocRef, newProfile);
-          setProfile(newProfile);
-        }
-      } else {
-        setProfile(null);
-      }
-      setLoading(false);
-    });
-
-    return unsubscribe;
+    const saved = localStorage.getItem('blackworm_user_profile');
+    if (saved) {
+      try {
+        setProfile(JSON.parse(saved));
+      } catch (e) {}
+    }
+    setLoading(false);
   }, []);
 
-  return { user, profile, loading };
+  return { user: profile, profile, loading };
 }

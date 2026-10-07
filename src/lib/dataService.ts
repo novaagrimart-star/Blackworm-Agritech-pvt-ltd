@@ -47,7 +47,7 @@ export async function logAudit(
       recordId,
       recordSummary: summary,
       performedByUid: user.uid,
-      performedByName: user.name,
+      performedByName: user.fullName || 'User',
       timestamp: new Date().toISOString(),
       createdAt: serverTimestamp(),
     };
@@ -71,7 +71,7 @@ export async function softDeleteRecord(
       originalRecordId: recordId,
       data: recordData,
       deletedByUid: user.uid,
-      deletedByName: user.name,
+      deletedByName: user.fullName || 'User',
       deletedAt: new Date().toISOString(),
     });
 

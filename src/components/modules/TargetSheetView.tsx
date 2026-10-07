@@ -1,36 +1,52 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   collection, 
   query, 
   onSnapshot, 
   doc, 
-  setDoc 
+  setDoc
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { UserProfile } from '../../lib/auth';
-import { softDeleteRecord, logAudit } from '../../lib/dataService';
+import { logAudit } from '../../lib/dataService';
 import { Language, translations } from '../../lib/i18n';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas-pro';
 import { 
-  Plus, 
   Target, 
-  Trash2, 
-  Edit3, 
-  Search,
+  ChevronDown,
+  User as UserIcon,
+  Save,
+  CheckCircle2,
+  Printer,
+  Download,
+  Loader2,
+  Phone,
+  Mail,
   X
 } from 'lucide-react';
 
-interface TargetItem {
+interface MonthlyData {
+  month: string;
+  target: number;
+  achievement: number;
+  collection: number;
+  actualCollection: number;
+}
+
+interface YearlySheet {
   id: string;
   userId: string;
-  userName: string;
-  month: string;
-  year: number;
-  targetSales: number;
-  achievedSales: number;
-  targetCollection: number;
-  achievedCollection: number;
-  ownerId: string;
-  isArchived?: boolean;
+  fullName: string;
+  designation: string;
+  center: string;
+  year: string;
+  lastYearSale: number;
+  lastYearCollection: number;
+  salesTarget: number;
+  lastYearOutstanding: number;
+  outstandingPercent: number;
+  months: MonthlyData[];
 }
 
 interface Props {
@@ -39,243 +55,534 @@ interface Props {
 }
 
 export const TargetSheetView: React.FC<Props> = ({ profile, lang }) => {
-  const t = translations[lang];
-  const [targets, setTargets] = useState<TargetItem[]>([]);
-  const [search, setSearch] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState('All');
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [editingTarget, setEditingTarget] = useState<TargetItem | null>(null);
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string>(profile.uid);
+  const [sheet, setYearlySheet] = useState<YearlySheet | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
-  const [formMonth, setFormMonth] = useState('October');
-  const [formYear, setFormYear] = useState(2026);
-  const [formUserName, setFormUserName] = useState(profile.name);
-  const [formTargetSales, setFormTargetSales] = useState('200000');
-  const [formTargetCollection, setFormTargetCollection] = useState('180000');
-  const [formAchievedSales, setFormAchievedSales] = useState('0');
-  const [formAchievedCollection, setFormAchievedCollection] = useState('0');
+  // Branding
+  const [logoUrl, setLogoUrl] = useState<string>('');
+  const [logoSize, setLogoSize] = useState<number>(80);
+  const [selectedUserPhoto, setSelectedUserPhoto] = useState<string>('');
 
+  const printableSheetRef = useRef<HTMLDivElement>(null);
+
+  // User photo listener
   useEffect(() => {
-    const q = query(collection(db, 'targets'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items: TargetItem[] = [];
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as TargetItem;
-        if (!data.isArchived) {
-          items.push({ id: docSnap.id, ...data });
-        }
-      });
-      setTargets(items);
-    }, (error) => {
-      console.error('Target fetch error:', error);
-    });
+    const user = users.find(u => u.uid === selectedUserId) || profile;
+    if (user && (user as any).photoUrl) {
+      setSelectedUserPhoto((user as any).photoUrl);
+    } else {
+      setSelectedUserPhoto('');
+    }
+  }, [selectedUserId, users, profile]);
 
-    return () => unsubscribe();
+  const monthsList = [
+    'April', 'May', 'June', 
+    'July', 'August', 'September', 
+    'October', 'November', 'December', 
+    'January', 'February', 'March'
+  ];
+
+  // Branding listener
+  useEffect(() => {
+    const unsubBranding = onSnapshot(doc(db, 'config', 'branding'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setLogoUrl(data.logoUrl || '');
+        setLogoSize(data.logoSize || 80);
+      }
+    });
+    return () => unsubBranding();
   }, []);
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Fetch users for dropdown
+  useEffect(() => {
+    const q = query(collection(db, 'users'));
+    const unsub = onSnapshot(q, (snap) => {
+      const list: UserProfile[] = [];
+      snap.forEach(d => list.push({ ...d.data() } as UserProfile));
+      list.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
+      setUsers(list);
+    });
+    return () => unsub();
+  }, []);
+
+  // Fetch or init sheet for selected user
+  useEffect(() => {
+    setLoading(true);
+    const sheetId = `yearly_${selectedUserId}_2026_27`;
+    const unsub = onSnapshot(doc(db, 'yearly_targets', sheetId), (docSnap) => {
+      if (docSnap.exists()) {
+        setYearlySheet(docSnap.data() as YearlySheet);
+      } else {
+        const selectedUser = users.find(u => u.uid === selectedUserId) || profile;
+        const newSheet: YearlySheet = {
+          id: sheetId,
+          userId: selectedUserId,
+          fullName: selectedUser.fullName || selectedUser.uid,
+          designation: selectedUser.designation || 'FIELD OFFICER',
+          center: selectedUser.center || '',
+          year: '2026-27',
+          lastYearSale: 0,
+          lastYearCollection: 0,
+          salesTarget: 0,
+          lastYearOutstanding: 0,
+          outstandingPercent: 10,
+          months: monthsList.map(m => ({
+            month: m,
+            target: 0,
+            achievement: 0,
+            collection: 0,
+            actualCollection: 0
+          }))
+        };
+        setYearlySheet(newSheet);
+      }
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [selectedUserId, users]);
+
+  const updateSheet = (updates: Partial<YearlySheet>) => {
+    if (!sheet) return;
+    setYearlySheet({ ...sheet, ...updates });
+  };
+
+  const updateMonth = (index: number, updates: Partial<MonthlyData>) => {
+    if (!sheet) return;
+    const newMonths = [...sheet.months];
+    newMonths[index] = { ...newMonths[index], ...updates };
+    setYearlySheet({ ...sheet, months: newMonths });
+  };
+
+  const handleSave = async () => {
+    if (!sheet) return;
+    setSaving(true);
     try {
-      const targetId = editingTarget ? editingTarget.id : `target_${Date.now()}`;
-      const payload: TargetItem = {
-        id: targetId,
-        userId: profile.uid,
-        userName: formUserName,
-        month: formMonth,
-        year: Number(formYear),
-        targetSales: Number(formTargetSales) || 0,
-        targetCollection: Number(formTargetCollection) || 0,
-        achievedSales: Number(formAchievedSales) || 0,
-        achievedCollection: Number(formAchievedCollection) || 0,
-        ownerId: profile.uid,
-        isArchived: false,
-      };
-
-      await setDoc(doc(db, 'targets', targetId), payload);
-      await logAudit(
-        editingTarget ? 'UPDATE' : 'CREATE',
-        'targets',
-        targetId,
-        `Target for ${payload.userName} (${payload.month} ${payload.year})`,
-        profile
-      );
-
-      setShowAddModal(false);
-      setEditingTarget(null);
+      await setDoc(doc(db, 'yearly_targets', sheet.id), {
+        ...sheet,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      await logAudit('UPDATE', 'yearly_targets', sheet.id, `Updated yearly target sheet for ${sheet.fullName}`, profile);
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
     } catch (err) {
-      console.error('Error saving target:', err);
+      console.error('Save failed:', err);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (item: TargetItem) => {
-    if (window.confirm(t.confirmDelete)) {
-      await softDeleteRecord('targets', item.id, item, profile);
+  const handleDownloadPdf = async () => {
+    if (!printableSheetRef.current) return;
+    try {
+      setIsGeneratingPdf(true);
+      const element = printableSheetRef.current;
+      
+      const canvas = await html2canvas(element, {
+        scale: 2.5,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: 1024,
+      });
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.98);
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, Math.min(pdfHeight, 297));
+      const sanitizedName = (sheet?.fullName ? `Target_Sheet_${sheet.fullName}` : 'Target_Sheet_2026_27').replace(/[^a-zA-Z0-9_-]/g, '_');
+      pdf.save(`${sanitizedName}.pdf`);
+    } catch (err: any) {
+      console.error('PDF download error:', err);
+      window.print();
+    } finally {
+      setIsGeneratingPdf(false);
     }
   };
 
-  const openEdit = (item: TargetItem) => {
-    setEditingTarget(item);
-    setFormMonth(item.month);
-    setFormYear(item.year);
-    setFormUserName(item.userName);
-    setFormTargetSales(String(item.targetSales));
-    setFormTargetCollection(String(item.targetCollection));
-    setFormAchievedSales(String(item.achievedSales));
-    setFormAchievedCollection(String(item.achievedCollection));
-    setShowAddModal(true);
+  if (loading) {
+    return (
+      <div className="flex justify-center p-12">
+        <div className="w-8 h-8 border-4 border-red-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (!sheet) return null;
+
+  const calculateQuarter = (mIndexes: number[]) => {
+    const qMonths = mIndexes.map(i => sheet.months[i]);
+    const target = qMonths.reduce((acc, m) => acc + (m.target || 0), 0);
+    const achievement = qMonths.reduce((acc, m) => acc + (m.achievement || 0), 0);
+    const collection = qMonths.reduce((acc, m) => acc + (m.collection || 0), 0);
+    const actual = qMonths.reduce((acc, m) => acc + (m.actualCollection || 0), 0);
+    return { target, achievement, collection, actual };
   };
 
-  const filtered = targets.filter(item => {
-    const matchesSearch = item.userName.toLowerCase().includes(search.toLowerCase()) || item.month.toLowerCase().includes(search.toLowerCase());
-    const matchesMonth = selectedMonth === 'All' || item.month === selectedMonth;
-    return matchesSearch && matchesMonth;
-  });
+  const Q1 = calculateQuarter([0, 1, 2]);
+  const Q2 = calculateQuarter([3, 4, 5]);
+  const Q3 = calculateQuarter([6, 7, 8]);
+  const Q4 = calculateQuarter([9, 10, 11]);
+  const Total = {
+    target: Q1.target + Q2.target + Q3.target + Q4.target,
+    achievement: Q1.achievement + Q2.achievement + Q3.achievement + Q4.achievement,
+    collection: Q1.collection + Q2.collection + Q3.collection + Q4.collection,
+    actual: Q1.actual + Q2.actual + Q3.actual + Q4.actual
+  };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <Target className="w-6 h-6 text-blue-600" />
-            {t.targetSheet}
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">मासिक विक्री व कलेक्शन उद्दिष्टे व्यवस्थापन</p>
-        </div>
-
-        <button
-          onClick={() => {
-            setEditingTarget(null);
-            setShowAddModal(true);
-          }}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>{t.addNew} टार्गेट</span>
-        </button>
-      </div>
-
-      <div className="flex gap-3">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-          <input
-            type="text"
-            placeholder="नाव किंवा महिना शोधा..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
-          />
-        </div>
-      </div>
-
-      {filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
-          <Target className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-sm font-semibold text-slate-700">कोणतेही टार्गेट उपलब्ध नाही</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filtered.map((item) => {
-            const salesPercent = item.targetSales > 0 ? Math.min(100, Math.round((item.achievedSales / item.targetSales) * 100)) : 0;
-            const collectionPercent = item.targetCollection > 0 ? Math.min(100, Math.round((item.achievedCollection / item.targetCollection) * 100)) : 0;
-
-            return (
-              <div key={item.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4 hover:border-blue-200 transition">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
-                      {item.month} {item.year}
-                    </span>
-                    <h3 className="text-base font-bold text-slate-900 mt-1">{item.userName}</h3>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={() => openEdit(item)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"><Edit3 className="w-4 h-4" /></button>
-                    <button onClick={() => handleDelete(item)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"><Trash2 className="w-4 h-4" /></button>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-500 font-medium">विक्री उद्दिष्ट (Sales):</span>
-                    <span className="font-bold text-slate-800">₹{item.achievedSales.toLocaleString()} / ₹{item.targetSales.toLocaleString()} ({salesPercent}%)</span>
-                  </div>
-                  <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                    <div className="h-full bg-blue-600 rounded-full" style={{ width: `${salesPercent}%` }} />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-500 font-medium">कलेक्शन उद्दिष्ट:</span>
-                    <span className="font-bold text-slate-800">₹{item.achievedCollection.toLocaleString()} / ₹{item.targetCollection.toLocaleString()} ({collectionPercent}%)</span>
-                  </div>
-                  <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                    <div className="h-full bg-teal-500 rounded-full" style={{ width: `${collectionPercent}%` }} />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-slate-900">{editingTarget ? 'टार्गेट अपडेट करा' : 'नवीन टार्गेट जोडा'}</h3>
-              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
-            </div>
-
-            <form onSubmit={handleSave} className="space-y-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">कर्मचारी नाव</label>
-                <input type="text" required value={formUserName} onChange={(e) => setFormUserName(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">महिना</label>
-                  <select value={formMonth} onChange={(e) => setFormMonth(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none">
-                    <option value="October">October</option>
-                    <option value="November">November</option>
-                    <option value="December">December</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">वर्ष</label>
-                  <input type="number" value={formYear} onChange={(e) => setFormYear(Number(e.target.value))} className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">विक्री टार्गेट (₹)</label>
-                  <input type="number" required value={formTargetSales} onChange={(e) => setFormTargetSales(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">पूर्ण विक्री (₹)</label>
-                  <input type="number" value={formAchievedSales} onChange={(e) => setFormAchievedSales(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">कलेक्शन टार्गेट (₹)</label>
-                  <input type="number" required value={formTargetCollection} onChange={(e) => setFormTargetCollection(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">पूर्ण कलेक्शन (₹)</label>
-                  <input type="number" value={formAchievedCollection} onChange={(e) => setFormAchievedCollection(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none" />
-                </div>
-              </div>
-
-              <div className="pt-2 flex gap-3">
-                <button type="button" onClick={() => setShowAddModal(false)} className="flex-1 py-2.5 rounded-xl border text-xs font-bold text-slate-600">{t.cancel}</button>
-                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white">{t.save}</button>
-              </div>
-            </form>
+    <div className="space-y-4 font-sans pb-12">
+      {/* Top Action Toolbar */}
+      <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md flex flex-col sm:flex-row items-center justify-between gap-3 no-print">
+        {/* User Selector Dropdown */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-72">
+            <UserIcon className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+            <select 
+              value={selectedUserId}
+              onChange={(e) => setSelectedUserId(e.target.value)}
+              className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black focus:outline-none focus:ring-2 focus:ring-red-500 appearance-none uppercase"
+            >
+              {users.map(u => (
+                <option key={u.uid} value={u.uid}>{u.fullName || u.uid} ({u.role})</option>
+              ))}
+            </select>
+            <ChevronDown className="w-4 h-4 absolute right-3 top-3 text-slate-400 pointer-events-none" />
           </div>
         </div>
+
+        {/* Action Buttons: Save, Download, Print */}
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <button 
+            onClick={handleSave}
+            disabled={saving}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
+            title="Save Target Sheet"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            <span>Save</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={isGeneratingPdf}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
+            title="Download A4 Sheet"
+          >
+            {isGeneratingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            <span>{isGeneratingPdf ? 'Generating...' : 'Download'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="p-2 rounded-xl bg-red-600 hover:bg-red-700 text-white flex items-center shadow-sm transition active:scale-95"
+            title="Print Target Sheet"
+          >
+            <Printer className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {showSuccess && (
+        <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl flex items-center justify-between text-emerald-800 text-xs font-bold animate-in fade-in no-print">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>Target sheet saved successfully!</span>
+          </div>
+          <button onClick={() => setShowSuccess(false)} className="text-emerald-700">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       )}
+
+      {/* ======================= UNIFIED PRINTABLE TARGET SHEET FORM ======================= */}
+      <div className="bg-white rounded-2xl border-2 border-slate-300 shadow-xl overflow-x-auto print:border-none print:shadow-none print:m-0 print:p-0">
+        <div ref={printableSheetRef} className="border-2 border-black bg-white shadow-sm min-w-[800px] sm:min-w-0">
+          
+          {/* 1. Header Section - Logo (Left) and Company Details (Center) */}
+          <div className="p-4 relative bg-white border-b-2 border-black">
+            <div className="flex items-center justify-between gap-4">
+              {/* Logo */}
+              <div className="w-20 h-20 flex items-center justify-center shrink-0">
+                {logoUrl ? (
+                  <img 
+                    src={logoUrl} 
+                    alt="Logo" 
+                    style={{ width: `${logoSize}px`, height: `${logoSize}px` }} 
+                    className="object-contain" 
+                  />
+                ) : (
+                  <img 
+                    src="/logo.jpg" 
+                    alt="Logo" 
+                    className="w-16 h-16 object-contain" 
+                  />
+                )}
+              </div>
+
+              {/* Company Info */}
+              <div className="flex-1 text-center space-y-1">
+                <h1 className="text-2xl font-black text-red-600 uppercase tracking-tight leading-none">
+                  BLACKWORM AGRITECH PVT LTD
+                </h1>
+                <div className="text-[8px] text-slate-700 font-bold leading-tight mt-1">
+                  <p>CIN : U01409PN2022PTC217246, GST No. 27AALCB3069J1ZC</p>
+                  <p>Address - Gat No. 17 Vijaynagar (Mhaisal), Tal - Miraj, Dist - Sangli. 416409.</p>
+                  <p className="flex items-center justify-center gap-4 mt-0.5">
+                    <span className="flex items-center gap-1 text-red-600"><Phone className="w-2.5 h-2.5" /> +91 7798716201</span>
+                    <span className="flex items-center gap-1 text-red-600 underline"><Mail className="w-2.5 h-2.5" /> blackwormagritechpvtltd@gmail.com</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Target Badge or User Photo */}
+              <div className="w-20 h-20 flex flex-col items-center justify-center border-2 border-black bg-white shrink-0 overflow-hidden">
+                {selectedUserPhoto ? (
+                  <img src={selectedUserPhoto} alt="User" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-1 bg-red-50 w-full h-full">
+                    <Target className="w-6 h-6 text-red-600 mb-0.5" />
+                    <span className="text-[9px] font-black text-slate-900 leading-none text-center">ANNUAL TARGET</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Banner: Sales Target Sheet 2026-27 - Fitted strictly in a single line on all mobile screens */}
+          <div className="bg-slate-900 text-white font-black px-2 py-2 flex items-center justify-center border-b-2 border-black">
+            <span className="text-xs sm:text-sm md:text-base tracking-widest uppercase whitespace-nowrap text-center">
+              SALES TARGET SHEET 2026-27
+            </span>
+          </div>
+
+          {/* 3. Side-by-Side Metadata Section (Box 1 on Left, Box 2 on Right in a Single Bordered Box) */}
+          <div className="grid grid-cols-2 divide-x-2 divide-black border-b-2 border-black bg-white text-[11px]">
+            {/* Left Box (Box 1): Name of Officer, Designation, Center */}
+            <div className="divide-y-2 divide-black">
+              <div className="flex items-center p-0 h-10">
+                <span className="font-black text-black w-36 sm:w-40 shrink-0 px-2 uppercase tracking-tighter">Name of Officer -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center px-2.5">
+                  <input 
+                    type="text" 
+                    value={sheet.fullName} 
+                    onChange={e => updateSheet({ fullName: e.target.value.toUpperCase() })} 
+                    placeholder="OFFICER NAME"
+                    className="w-full bg-transparent font-black text-black uppercase focus:outline-none text-center" 
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center p-0 h-10">
+                <span className="font-black text-black w-36 sm:w-40 shrink-0 px-2 uppercase tracking-tighter">Designation -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center px-2.5">
+                  <input 
+                    type="text" 
+                    value={sheet.designation} 
+                    onChange={e => updateSheet({ designation: e.target.value.toUpperCase() })} 
+                    placeholder="FIELD OFFICER"
+                    className="w-full bg-transparent font-black text-black uppercase focus:outline-none text-center" 
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center p-0 h-10">
+                <span className="font-black text-black w-36 sm:w-40 shrink-0 px-2 uppercase tracking-tighter">Center (HQ) -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center px-2.5">
+                  <input 
+                    type="text" 
+                    value={sheet.center} 
+                    onChange={e => updateSheet({ center: e.target.value.toUpperCase() })} 
+                    placeholder="SANGLI / TASGAON" 
+                    className="w-full bg-transparent font-black text-black uppercase focus:outline-none text-center" 
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Right Box (Box 2): Last Year Sale, Sales Target, Last Year Outstanding */}
+            <div className="divide-y-2 divide-black">
+              <div className="flex items-center p-0 h-10">
+                <span className="font-black text-black w-44 sm:w-48 shrink-0 px-2 uppercase tracking-tighter">Last Year Sale 2025-26 -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-2.5">
+                  <input 
+                    type="number" 
+                    value={sheet.lastYearSale || ''} 
+                    onChange={e => updateSheet({ lastYearSale: Number(e.target.value) })} 
+                    placeholder="0"
+                    className="w-full bg-transparent font-black text-black focus:outline-none font-mono text-center" 
+                  />
+                  <span className="font-black text-black text-[10px] uppercase ml-1 shrink-0">Lakh</span>
+                </div>
+              </div>
+
+              <div className="flex items-center p-0 h-10 bg-red-50/50">
+                <span className="font-black text-red-600 w-44 sm:w-48 shrink-0 px-2 uppercase tracking-tighter">Sales Target 2026-27 -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-2.5">
+                  <input 
+                    type="number" 
+                    value={sheet.salesTarget || ''} 
+                    onChange={e => updateSheet({ salesTarget: Number(e.target.value) })} 
+                    placeholder="0"
+                    className="w-full bg-transparent font-black text-red-600 focus:outline-none font-mono text-center" 
+                  />
+                  <span className="font-black text-red-600 text-[10px] uppercase ml-1 shrink-0">Lakh</span>
+                </div>
+              </div>
+
+              <div className="flex items-center p-0 h-10">
+                <span className="font-black text-black w-44 sm:w-48 shrink-0 px-2 uppercase tracking-tighter">Last Year Outstanding -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-2.5">
+                  <input 
+                    type="number" 
+                    value={sheet.lastYearOutstanding || ''} 
+                    onChange={e => updateSheet({ lastYearOutstanding: Number(e.target.value) })} 
+                    placeholder="0"
+                    className="w-full bg-transparent font-black text-black focus:outline-none font-mono text-center" 
+                  />
+                  <span className="font-black text-black text-[10px] uppercase ml-1 shrink-0">Lakh</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Target Data Table */}
+          <div className="overflow-x-auto bg-white">
+            <table className="w-full text-left border-collapse text-[11px]">
+              <thead>
+                <tr className="bg-slate-900 text-white font-black uppercase text-center border-b-2 border-black">
+                  <th className="p-2 border-r-2 border-black whitespace-nowrap w-12 text-center">Sr.</th>
+                  <th className="p-2 border-r-2 border-black w-28 text-center">Month</th>
+                  <th className="p-2 border-r-2 border-black text-center">Target (Lakh)</th>
+                  <th className="p-2 border-r-2 border-black text-center">Achieve (Lakh)</th>
+                  <th className="p-2 border-r-2 border-black text-center">% Ach.</th>
+                  <th className="p-2 border-r-2 border-black text-center">Collection (Lakh)</th>
+                  <th className="p-2 border-r-2 border-black text-center">Actual Coll.</th>
+                  <th className="p-2 text-center">% Coll.</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y-2 divide-black text-black font-black">
+                {sheet.months.map((m, idx) => {
+                  const achPercent = (m.target || 0) > 0 ? ((m.achievement || 0) / m.target) * 100 : 0;
+                  const collPercent = (m.collection || 0) > 0 ? ((m.actualCollection || 0) / m.collection) * 100 : 0;
+
+                  return (
+                    <React.Fragment key={m.month}>
+                      <tr className="hover:bg-slate-50 transition-colors">
+                        <td className="p-1.5 border-r-2 border-black text-center font-black text-black">{idx + 1}</td>
+                        <td className="p-1.5 border-r-2 border-black font-black uppercase text-center">{m.month}</td>
+                        <td className="p-1 border-r-2 border-black">
+                          <input 
+                            type="number" 
+                            value={m.target || ''} 
+                            onChange={e => updateMonth(idx, { target: Number(e.target.value) })}
+                            className="w-full px-2 py-1 bg-transparent border-none focus:outline-none focus:bg-amber-50 rounded text-center font-black font-mono"
+                            placeholder="0.00"
+                          />
+                        </td>
+                        <td className="p-1 border-r-2 border-black">
+                          <input 
+                            type="number" 
+                            value={m.achievement || ''} 
+                            onChange={e => updateMonth(idx, { achievement: Number(e.target.value) })}
+                            className="w-full px-2 py-1 bg-transparent border-none focus:outline-none focus:bg-blue-50 rounded text-center font-black font-mono text-blue-700"
+                            placeholder="0.00"
+                          />
+                        </td>
+                        <td className="p-1.5 border-r-2 border-black text-center font-black font-mono">{achPercent.toFixed(1)}%</td>
+                        <td className="p-1 border-r-2 border-black">
+                          <input 
+                            type="number" 
+                            value={m.collection || ''} 
+                            onChange={e => updateMonth(idx, { collection: Number(e.target.value) })}
+                            className="w-full px-2 py-1 bg-transparent border-none focus:outline-none focus:bg-amber-50 rounded text-center font-black font-mono"
+                            placeholder="0.00"
+                          />
+                        </td>
+                        <td className="p-1 border-r-2 border-black">
+                          <input 
+                            type="number" 
+                            value={m.actualCollection || ''} 
+                            onChange={e => updateMonth(idx, { actualCollection: Number(e.target.value) })}
+                            className="w-full px-2 py-1 bg-transparent border-none focus:outline-none focus:bg-emerald-50 rounded text-center font-black font-mono text-emerald-700"
+                            placeholder="0.00"
+                          />
+                        </td>
+                        <td className="p-1.5 text-center font-black font-mono">{collPercent.toFixed(1)}%</td>
+                      </tr>
+
+                      {/* Render Quarter Subtotal Row */}
+                      {(idx === 2 || idx === 5 || idx === 8 || idx === 11) && (
+                        <tr className="bg-amber-200/90 font-black text-black border-y-2 border-black">
+                          <td colSpan={2} className="p-2 border-r-2 border-black text-center uppercase tracking-wider font-black">
+                            {idx === 2 ? 'Q1' : idx === 5 ? 'Q2' : idx === 8 ? 'Q3' : 'Q4'} TOTAL
+                          </td>
+                          {(() => {
+                            const q = idx === 2 ? Q1 : idx === 5 ? Q2 : idx === 8 ? Q3 : Q4;
+                            return (
+                              <>
+                                <td className="p-2 border-r-2 border-black text-center font-mono font-black">{q.target.toFixed(2)}</td>
+                                <td className="p-2 border-r-2 border-black text-center font-mono text-blue-900 font-black">{q.achievement.toFixed(2)}</td>
+                                <td className="p-2 border-r-2 border-black text-center font-mono font-black">{q.target > 0 ? ((q.achievement/q.target)*100).toFixed(1) : '0.0'}%</td>
+                                <td className="p-2 border-r-2 border-black text-center font-mono font-black">{q.collection.toFixed(2)}</td>
+                                <td className="p-2 border-r-2 border-black text-center font-mono text-emerald-900 font-black">{q.actual.toFixed(2)}</td>
+                                <td className="p-2 text-center font-mono font-black">{q.collection > 0 ? ((q.actual/q.collection)*100).toFixed(1) : '0.0'}%</td>
+                              </>
+                            );
+                          })()}
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+
+                {/* Annual Grand Total Row */}
+                <tr className="bg-red-600 text-white font-black text-xs uppercase border-t-2 border-black">
+                  <td colSpan={2} className="p-2.5 text-center tracking-tight border-r-2 border-black font-black">
+                    Grand Total 2026-27
+                  </td>
+                  <td className="p-2.5 text-center border-r-2 border-black font-mono font-black">{Total.target.toFixed(2)}</td>
+                  <td className="p-2.5 text-center border-r-2 border-black font-mono font-black">{Total.achievement.toFixed(2)}</td>
+                  <td className="p-2.5 text-center border-r-2 border-black font-mono font-black">{Total.target > 0 ? ((Total.achievement/Total.target)*100).toFixed(1) : '0.0'}%</td>
+                  <td className="p-2.5 text-center border-r-2 border-black font-mono font-black">{Total.collection.toFixed(2)}</td>
+                  <td className="p-2.5 text-center border-r-2 border-black font-mono font-black">{Total.actual.toFixed(2)}</td>
+                  <td className="p-2.5 text-center font-mono font-black">{Total.collection > 0 ? ((Total.actual/Total.collection)*100).toFixed(1) : '0.0'}%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Footer Approval Space */}
+          <div className="p-4 bg-white border-t-2 border-black flex justify-between items-end">
+            <div className="text-center w-56">
+              <div className="h-10"></div>
+              <div className="border-t-2 border-black pt-1">
+                <span className="font-black text-black uppercase text-[10px]">Officer Signature</span>
+              </div>
+            </div>
+
+            <div className="text-center w-56">
+              <div className="h-10"></div>
+              <div className="border-t-2 border-black pt-1">
+                <span className="font-black text-black uppercase text-[10px]">Authorized Signatory</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

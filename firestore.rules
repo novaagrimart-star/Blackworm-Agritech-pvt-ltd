@@ -2,41 +2,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // 1. GLOBAL HELPERS
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function isManager() {
-      return isSignedIn() && (
-        request.auth.token.email == 'novaagrimart@gmail.com' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'owner']
-      );
-    }
-
-    function isOwner(resourceData) {
-      return isSignedIn() && (
-        resourceData.ownerId == request.auth.uid ||
-        resourceData.createdBy == request.auth.uid ||
-        isManager()
-      );
-    }
-
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    // Default catch-all: reject unknown
+    // Default catch-all
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if true;
     }
 
     // Connection check
@@ -44,72 +12,63 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // 2. USER PROFILES
+    // 1. USER PROFILES
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && (userId == request.auth.uid || isManager());
-      allow delete: if isManager();
+      allow read, write: if true;
     }
 
-    // 3. FARMERS
+    // 2. FARMERS
     match /farmers/{farmerId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isSignedIn() && (isOwner(resource.data) || isManager());
+      allow read, write: if true;
     }
 
-    // 4. ORDERS & COLLECTIONS
+    // 3. ORDERS & COLLECTIONS
     match /orders/{orderId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isSignedIn() && (isOwner(resource.data) || isManager());
+      allow read, write: if true;
     }
 
-    // 5. TARGETS
+    // 4. TARGETS
     match /targets/{targetId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isManager();
+      allow read, write: if true;
     }
 
-    // 6. TRAVEL RECORDS
+    // 5. TRAVEL RECORDS
     match /travel_records/{travelId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isSignedIn() && (isOwner(resource.data) || isManager());
+      allow read, write: if true;
     }
 
-    // 7. DEALERS
+    // 6. DEALERS & APPLICATIONS
     match /dealers/{dealerId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isManager();
+      allow read, write: if true;
+    }
+    match /dealers_application/{dealerId} {
+      allow read, write: if true;
     }
 
-    // 8. PRODUCTS
+    // 7. PRODUCTS & PRICELIST
     match /products/{productId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isManager();
+      allow read, write: if true;
+    }
+    match /products_pricelist/{productId} {
+      allow read, write: if true;
     }
 
-    // 9. SCHEMES
+    // 8. SCHEMES
     match /schemes/{schemeId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isManager();
+      allow read, write: if true;
     }
 
-    // 10. AUDIT LOGS (Append-only)
+    // 9. AUDIT LOGS
     match /audit_logs/{logId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow read, create: if true;
       allow update, delete: if false;
     }
 
-    // 11. DELETED RECORDS (Soft-Delete Recycle Bin)
+    // 10. DELETED RECORDS (Soft-Delete Recycle Bin)
     match /deleted_records/{docId} {
-      allow read: if isSignedIn();
-      allow create, delete: if isSignedIn();
+      allow read, create, delete: if true;
       allow update: if false;
     }
   }
 }
+

@@ -41,7 +41,7 @@ export const OrderCalculatorView: React.FC<Props> = ({ profile, lang }) => {
         paymentMode: 'Credit / Calculated',
         status: 'pending',
         ownerId: profile.uid,
-        createdByName: profile.name,
+        createdByName: profile.fullName || 'User',
         createdAt: new Date().toISOString(),
         isArchived: false,
       };
@@ -61,22 +61,22 @@ export const OrderCalculatorView: React.FC<Props> = ({ profile, lang }) => {
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <Calculator className="w-6 h-6 text-teal-600" />
-            {t.orderCalculator}
+            Order Calculator
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5">खते, जैविक कीटकनाशके व योजना डिस्काउंट दर मोजा</p>
+          <p className="text-xs text-slate-500 mt-0.5">Calculate product rates and scheme discounts</p>
         </div>
       </div>
 
       {success && (
         <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>यशस्वी! कॅल्क्युलेटेड ऑर्डर 'ऑर्डर आणि कलेक्शन' मध्ये यशस्वीरित्या जतन झाली आहे.</span>
+          <span>Success! Calculated order saved in 'Orders' module.</span>
         </div>
       )}
 
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
         <div>
-          <label className="text-xs font-semibold text-slate-700 block mb-1">डीलर / कृषी केंद्र नाव</label>
+          <label className="text-xs font-semibold text-slate-700 block mb-1">Dealer / Shop Name</label>
           <input
             type="text"
             value={dealerName}
@@ -89,7 +89,7 @@ export const OrderCalculatorView: React.FC<Props> = ({ profile, lang }) => {
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
             <div>
               <p className="text-xs font-bold text-slate-800">Blackworm Vermicompost (50 kg)</p>
-              <p className="text-[11px] text-slate-500">दर: ₹{vermimaxPrice} / बॅग</p>
+              <p className="text-[11px] text-slate-500">Rate: ₹{vermimaxPrice} / Bag</p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -99,14 +99,14 @@ export const OrderCalculatorView: React.FC<Props> = ({ profile, lang }) => {
                 onChange={(e) => setBagsVermicompost(Number(e.target.value))}
                 className="w-20 px-2 py-1 text-center border rounded-lg text-xs font-bold"
               />
-              <span className="text-xs text-slate-600">बॅग्ज</span>
+              <span className="text-xs text-slate-600">Bags</span>
             </div>
           </div>
 
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
             <div>
               <p className="text-xs font-bold text-slate-800">Vermiwash Liquid (5 Ltr)</p>
-              <p className="text-[11px] text-slate-500">दर: ₹{vermiwashPrice} / कॅन</p>
+              <p className="text-[11px] text-slate-500">Rate: ₹{vermiwashPrice} / Can</p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -116,14 +116,14 @@ export const OrderCalculatorView: React.FC<Props> = ({ profile, lang }) => {
                 onChange={(e) => setBagsVermiwash(Number(e.target.value))}
                 className="w-20 px-2 py-1 text-center border rounded-lg text-xs font-bold"
               />
-              <span className="text-xs text-slate-600">कॅन</span>
+              <span className="text-xs text-slate-600">Cans</span>
             </div>
           </div>
 
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
             <div>
               <p className="text-xs font-bold text-slate-800">Neem Oil Pest Guard (1 Ltr)</p>
-              <p className="text-[11px] text-slate-500">दर: ₹{neemPrice} / बॉटल</p>
+              <p className="text-[11px] text-slate-500">Rate: ₹{neemPrice} / Bottle</p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -133,13 +133,13 @@ export const OrderCalculatorView: React.FC<Props> = ({ profile, lang }) => {
                 onChange={(e) => setBagsNeem(Number(e.target.value))}
                 className="w-20 px-2 py-1 text-center border rounded-lg text-xs font-bold"
               />
-              <span className="text-xs text-slate-600">बॉटल्स</span>
+              <span className="text-xs text-slate-600">Bottles</span>
             </div>
           </div>
         </div>
 
         <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-          <span className="text-xs font-semibold text-slate-700">योजना / स्पेशल डिस्काउंट (%)</span>
+          <span className="text-xs font-semibold text-slate-700">Scheme / Special Discount (%)</span>
           <input
             type="number"
             min="0"
@@ -152,15 +152,15 @@ export const OrderCalculatorView: React.FC<Props> = ({ profile, lang }) => {
 
         <div className="bg-teal-50 border border-teal-200 rounded-2xl p-4 space-y-2 text-xs">
           <div className="flex justify-between text-slate-600">
-            <span>एकूण उत्पादन मूल्य (Subtotal):</span>
+            <span>Subtotal:</span>
             <span className="font-bold">₹{subtotal.toLocaleString()}</span>
           </div>
           <div className="flex justify-between text-teal-700">
-            <span>डिस्काउंट वजा ({discountPercent}%):</span>
+            <span>Discount ({discountPercent}%):</span>
             <span className="font-bold">- ₹{discountAmount.toLocaleString()}</span>
           </div>
           <div className="flex justify-between text-base font-black text-teal-900 pt-2 border-t border-teal-200">
-            <span>अंतिम देयक रक्कम (Net Payable):</span>
+            <span>Net Payable:</span>
             <span>₹{netPayable.toLocaleString()}</span>
           </div>
         </div>
@@ -170,7 +170,7 @@ export const OrderCalculatorView: React.FC<Props> = ({ profile, lang }) => {
           className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center justify-center gap-2"
         >
           <ShoppingBag className="w-4 h-4" />
-          <span>ही ऑर्डर 'ऑर्डर आणि कलेक्शन' मध्ये रूपांतरित करा</span>
+          <span>Convert to Order</span>
         </button>
       </div>
     </div>

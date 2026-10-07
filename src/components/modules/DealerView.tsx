@@ -1,15 +1,35 @@
-import React, { useState, useEffect } from 'react';
-import { collection, query, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import React, { useState, useEffect, useRef } from 'react';
+import { collection, query, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { UserProfile } from '../../lib/auth';
-import { softDeleteRecord, logAudit } from '../../lib/dataService';
-import { Language, translations } from '../../lib/i18n';
-import { Users, Plus, Phone, MapPin, Trash2, X, Building, CreditCard, FileCheck } from 'lucide-react';
+import { logAudit } from '../../lib/dataService';
+import { Language } from '../../lib/i18n';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas-pro';
+import { 
+  Plus, 
+  Search, 
+  Trash2, 
+  Printer, 
+  Edit3, 
+  Check, 
+  X, 
+  Camera, 
+  Image as ImageIcon,
+  Phone, 
+  Mail, 
+  ArrowLeft,
+  FileCheck,
+  CheckCircle2,
+  Copy,
+  Save,
+  Download,
+  Loader2
+} from 'lucide-react';
 
-interface DealershipFormItem {
+export interface DealershipFormItem {
   id: string;
   center: string;
-  tas: string;
   shopOpeningDate: string;
   dealerCode: string;
   village: string;
@@ -27,11 +47,29 @@ interface DealershipFormItem {
   dateOfBirth: string;
   gstNo: string;
   pinCode: string;
+  dealershipAddressPhoto?: string;
+  
+  // Bank Details
   bankName: string;
   bankAddress: string;
   accountNo: string;
   ifscCode: string;
   chequeNos: string;
+
+  // Declaration & Office
+  place: string;
+  declarationDate: string;
+  remarks: string;
+  officerName: string;
+  status: 'Approved' | 'Pending' | 'Draft';
+  
+  // Office Use Fields
+  officeDate?: string;
+  officeTime?: string;
+  officePlace?: string;
+
+  createdAt?: string;
+  updatedAt?: string;
   isArchived?: boolean;
 }
 
@@ -40,287 +78,1240 @@ interface Props {
   lang: Language;
 }
 
-export const DealerView: React.FC<Props> = ({ profile, lang }) => {
-  const t = translations[lang];
+export const DealerView: React.FC<Props> = ({ profile }) => {
   const [dealers, setDealers] = useState<DealershipFormItem[]>([]);
-  const [showModal, setShowModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active'>('all');
+  
+  // View mode: 'list' | 'form'
+  const [viewMode, setViewMode] = useState<'list' | 'form'>('list');
+  const [isEditing, setIsEditing] = useState(true);
+  const [currentId, setCurrentId] = useState<string | null>(null);
 
-  // Form State matching Dealership Application Form
+  // Form fields
   const [center, setCenter] = useState('Sangli');
-  const [tas, setTas] = useState('TAS');
   const [shopOpeningDate, setShopOpeningDate] = useState('2021-09-04');
-  const [dealerCode, setDealerCode] = useState('DEALER-004');
-  const [village, setVillage] = useState('BALAGAVADE');
+  const [dealerCode, setDealerCode] = useState('');
+  const [village, setVillage] = useState('');
   const [securityDeposit, setSecurityDeposit] = useState('NA');
-  const [firmName, setFirmName] = useState('VIGHNAHARTA AGRO AGENCY BALGAVADE');
-  const [proprietorName, setProprietorName] = useState('MONALI SUBHASH KHARADE');
-  const [contactNumber, setContactNumber] = useState('9970337506');
-  const [state, setState] = useState('Maharashtra');
-  const [emailId, setEmailId] = useState('sachinkharade.dtis@gmail.com');
-  const [responsiblePerson, setResponsiblePerson] = useState('SACHIN SUBHASH KHARADE');
-  const [responsibleContact, setResponsibleContact] = useState('9970337506');
-  const [aadhaarNo, setAadhaarNo] = useState('208034361547');
+  const [dealershipAddressPhoto, setDealershipAddressPhoto] = useState('');
+  const [firmName, setFirmName] = useState('');
+  const [proprietorName, setProprietorName] = useState('');
+  const [stateName, setStateName] = useState('Maharashtra');
+  const [contactNumber, setContactNumber] = useState('');
+  const [emailId, setEmailId] = useState('');
+  const [responsiblePerson, setResponsiblePerson] = useState('');
+  const [responsibleContact, setResponsibleContact] = useState('');
+  const [aadhaarNo, setAadhaarNo] = useState('');
   const [district, setDistrict] = useState('SANGLI');
-  const [panNo, setPanNo] = useState('JYCPK2123M');
-  const [dateOfBirth, setDateOfBirth] = useState('1996-04-15');
-  const [gstNo, setGstNo] = useState('27JYCPK2123M1Z8');
-  const [pinCode, setPinCode] = useState('416312');
-  const [bankName, setBankName] = useState('BANK OF MAHARASHTRA');
-  const [bankAddress, setBankAddress] = useState('C.S.C.NO.8, GROUND FLOOR, MANJARDE');
-  const [accountNo, setAccountNo] = useState('60396495517');
-  const [ifscCode, setIfscCode] = useState('MAHB0000819');
-  const [chequeNos, setChequeNos] = useState('027418 - 027419');
+  const [panNo, setPanNo] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
+  const [gstNo, setGstNo] = useState('');
+  const [pinCode, setPinCode] = useState('');
+
+  const [bankName, setBankName] = useState('');
+  const [bankAddress, setBankAddress] = useState('');
+  const [accountNo, setAccountNo] = useState('');
+  const [ifscCode, setIfscCode] = useState('');
+  const [chequeNos, setChequeNos] = useState('');
+
+  const [place, setPlace] = useState('Sangli');
+  const [declarationDate, setDeclarationDate] = useState(new Date().toISOString().slice(0, 10));
+  const [remarks, setRemarks] = useState('');
+  const [officerName, setOfficerName] = useState('SHRIDHAR BALKRUSHNA SHINDE');
+  const [status, setStatus] = useState<'Approved' | 'Pending' | 'Draft'>('Approved');
+  
+  // Office Use Fields
+  const [officeDate, setOfficeDate] = useState('');
+  const [officeTime, setOfficeTime] = useState('');
+  const [officePlace, setOfficePlace] = useState('');
+
+  const [logoUrl, setLogoUrl] = useState<string>('');
+  const [logoSize, setLogoSize] = useState<number>(80);
+
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [actionModalDealer, setActionModalDealer] = useState<DealershipFormItem | null>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const printableFormRef = useRef<HTMLDivElement>(null);
+
+  // Mobile Hardware / Navigation Back Button Integration
+  useEffect(() => {
+    if (viewMode === 'form') {
+      window.history.pushState({ dealerFormOpen: true }, '');
+      const handlePopState = () => {
+        setViewMode('list');
+      };
+      window.addEventListener('popstate', handlePopState);
+      return () => {
+        window.removeEventListener('popstate', handlePopState);
+      };
+    }
+  }, [viewMode]);
+
+  const handleDownloadPdf = async () => {
+    if (!printableFormRef.current) return;
+    try {
+      setIsGeneratingPdf(true);
+      const element = printableFormRef.current;
+      
+      const canvas = await html2canvas(element, {
+        scale: 2.5, // Crisp high-definition render for sharp text and borders
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: 1024,
+      });
+
+      const imgData = canvas.toDataURL('image/jpeg', 1.0);
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, Math.min(pdfHeight, 297));
+      const sanitizedName = (firmName || dealerCode || 'Dealership_Form').replace(/[^a-zA-Z0-9_-]/g, '_');
+      pdf.save(`${sanitizedName}.pdf`);
+    } catch (err: any) {
+      console.error('PDF download error:', err);
+      window.print();
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  useEffect(() => {
+    // Fetch branding config
+    const unsubBranding = onSnapshot(doc(db, 'config', 'branding'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setLogoUrl(data.logoUrl || '');
+        setLogoSize(data.logoSize || 80);
+      }
+    });
+    return () => unsubBranding();
+  }, []);
 
   useEffect(() => {
     const q = query(collection(db, 'dealers_application'));
     const unsub = onSnapshot(q, (snap) => {
       const list: DealershipFormItem[] = [];
-      snap.forEach(d => {
+      snap.forEach((d) => {
         const data = d.data() as DealershipFormItem;
-        if (!data.isArchived) list.push({ id: d.id, ...data });
+        if (!data.isArchived) {
+          list.push({ ...data, id: d.id });
+        }
       });
 
-      if (list.length === 0) {
-        seedInitialDealer(profile);
-      } else {
-        setDealers(list);
-      }
+      // Sort by dealerCode or createdAt
+      list.sort((a, b) => (b.dealerCode || '').localeCompare(a.dealerCode || ''));
+      setDealers(list);
     });
     return () => unsub();
-  }, [profile]);
+  }, []);
 
-  const seedInitialDealer = async (user: UserProfile) => {
-    const id = `dealer_app_init`;
-    const defaultDealer: DealershipFormItem = {
-      id,
-      center,
-      tas,
-      shopOpeningDate,
-      dealerCode,
-      village,
-      securityDeposit,
-      firmName,
-      proprietorName,
-      contactNumber,
-      state,
-      emailId,
-      responsiblePerson,
-      responsibleContact,
-      aadhaarNo,
-      district,
-      panNo,
-      dateOfBirth,
-      gstNo,
-      pinCode,
-      bankName,
-      bankAddress,
-      accountNo,
-      ifscCode,
-      chequeNos,
-      isArchived: false,
-    };
-    await setDoc(doc(db, 'dealers_application', id), defaultDealer);
+  // Real-time listener for individual dealer document updates across all devices in milliseconds
+  useEffect(() => {
+    if (viewMode === 'form' && currentId) {
+      const unsubDoc = onSnapshot(doc(db, 'dealers_application', currentId), (docSnap) => {
+        if (docSnap.exists()) {
+          const item = docSnap.data() as DealershipFormItem;
+          setCenter(item.center || '');
+          setShopOpeningDate(item.shopOpeningDate || '');
+          setDealerCode(item.dealerCode || '');
+          setVillage(item.village || '');
+          setSecurityDeposit(item.securityDeposit || 'NA');
+          setDealershipAddressPhoto(item.dealershipAddressPhoto || '');
+          setFirmName(item.firmName || '');
+          setProprietorName(item.proprietorName || '');
+          setStateName(item.state || 'Maharashtra');
+          setContactNumber(item.contactNumber || '');
+          setEmailId(item.emailId || '');
+          setResponsiblePerson(item.responsiblePerson || '');
+          setResponsibleContact(item.responsibleContact || '');
+          setAadhaarNo(item.aadhaarNo || '');
+          setDistrict(item.district || '');
+          setPanNo(item.panNo || '');
+          setDateOfBirth(item.dateOfBirth || '');
+          setGstNo(item.gstNo || '');
+          setPinCode(item.pinCode || '');
+          setBankName(item.bankName || '');
+          setBankAddress(item.bankAddress || '');
+          setAccountNo(item.accountNo || '');
+          setIfscCode(item.ifscCode || '');
+          setChequeNos(item.chequeNos || '');
+          setPlace(item.place || 'Sangli');
+          setDeclarationDate(item.declarationDate || new Date().toISOString().slice(0, 10));
+          setRemarks(item.remarks || '');
+          setOfficerName(item.officerName || 'SHRIDHAR BALKRUSHNA SHINDE');
+          setOfficeDate(item.officeDate || '');
+          setOfficeTime(item.officeTime || '');
+          setOfficePlace(item.officePlace || '');
+          setStatus(item.status || 'Approved');
+        }
+      });
+      return () => unsubDoc();
+    }
+  }, [viewMode, currentId]);
+
+  const resetForm = (customCode?: string) => {
+    const nextCode = customCode || `DEALER ${String(dealers.length + 1).padStart(3, '0')}`;
+    setCurrentId(null);
+    setCenter('');
+    setShopOpeningDate(new Date().toISOString().slice(0, 10));
+    setDealerCode(nextCode);
+    setVillage('');
+    setSecurityDeposit('NA');
+    setDealershipAddressPhoto('');
+    setFirmName('');
+    setProprietorName('');
+    setStateName('Maharashtra');
+    setContactNumber('');
+    setEmailId('');
+    setResponsiblePerson('');
+    setResponsibleContact('');
+    setAadhaarNo('');
+    setDistrict('');
+    setPanNo('');
+    setDateOfBirth('');
+    setGstNo('');
+    setPinCode('');
+    setBankName('');
+    setBankAddress('');
+    setAccountNo('');
+    setIfscCode('');
+    setChequeNos('');
+    setPlace('Sangli');
+    setDeclarationDate(new Date().toISOString().slice(0, 10));
+    setRemarks('');
+    setOfficerName('SHRIDHAR BALKRUSHNA SHINDE');
+    setOfficeDate(new Date().toISOString().slice(0, 10));
+    setOfficeTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+    setOfficePlace('SANGLI');
+    setStatus('Approved');
+    setIsEditing(true);
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const id = `dealer_${Date.now()}`;
-    const newItem: DealershipFormItem = {
+  const loadDealerToForm = (item: DealershipFormItem, editMode: boolean = false) => {
+    setCurrentId(item.id);
+    setCenter(item.center || '');
+    setShopOpeningDate(item.shopOpeningDate || '');
+    setDealerCode(item.dealerCode || '');
+    setVillage(item.village || '');
+    setSecurityDeposit(item.securityDeposit || 'NA');
+    setDealershipAddressPhoto(item.dealershipAddressPhoto || '');
+    setFirmName(item.firmName || '');
+    setProprietorName(item.proprietorName || '');
+    setStateName(item.state || 'Maharashtra');
+    setContactNumber(item.contactNumber || '');
+    setEmailId(item.emailId || '');
+    setResponsiblePerson(item.responsiblePerson || '');
+    setResponsibleContact(item.responsibleContact || '');
+    setAadhaarNo(item.aadhaarNo || '');
+    setDistrict(item.district || '');
+    setPanNo(item.panNo || '');
+    setDateOfBirth(item.dateOfBirth || '');
+    setGstNo(item.gstNo || '');
+    setPinCode(item.pinCode || '');
+    setBankName(item.bankName || '');
+    setBankAddress(item.bankAddress || '');
+    setAccountNo(item.accountNo || '');
+    setIfscCode(item.ifscCode || '');
+    setChequeNos(item.chequeNos || '');
+    setPlace(item.place || 'Sangli');
+    setDeclarationDate(item.declarationDate || new Date().toISOString().slice(0, 10));
+    setRemarks(item.remarks || '');
+    setOfficerName(item.officerName || 'SHRIDHAR BALKRUSHNA SHINDE');
+    setOfficeDate(item.officeDate || '');
+    setOfficeTime(item.officeTime || '');
+    setOfficePlace(item.officePlace || '');
+    setStatus(item.status || 'Approved');
+    setIsEditing(editMode);
+    setViewMode('form');
+  };
+
+  const handleSave = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!firmName.trim()) {
+      alert('Please enter Firm Name');
+      return;
+    }
+
+    const id = currentId || `dealer_app_${Date.now()}`;
+    const generatedCode = dealerCode.trim() || `DEALER ${String(dealers.length + 1).padStart(3, '0')}`;
+
+    const payload: DealershipFormItem = {
       id,
-      center,
-      tas,
+      center: center.trim(),
       shopOpeningDate,
-      dealerCode: dealerCode.trim(),
+      dealerCode: generatedCode,
       village: village.trim(),
-      securityDeposit,
-      firmName: firmName.trim(),
-      proprietorName: proprietorName.trim(),
+      securityDeposit: securityDeposit.trim(),
+      dealershipAddressPhoto,
+      firmName: firmName.trim().toUpperCase(),
+      proprietorName: proprietorName.trim().toUpperCase(),
       contactNumber: contactNumber.trim(),
-      state,
+      state: stateName.trim(),
       emailId: emailId.trim(),
-      responsiblePerson: responsiblePerson.trim(),
+      responsiblePerson: responsiblePerson.trim().toUpperCase(),
       responsibleContact: responsibleContact.trim(),
       aadhaarNo: aadhaarNo.trim(),
-      district: district.trim(),
-      panNo: panNo.trim(),
+      district: district.trim().toUpperCase(),
+      panNo: panNo.trim().toUpperCase(),
       dateOfBirth,
-      gstNo: gstNo.trim(),
+      gstNo: gstNo.trim().toUpperCase(),
       pinCode: pinCode.trim(),
-      bankName: bankName.trim(),
-      bankAddress: bankAddress.trim(),
+      bankName: bankName.trim().toUpperCase(),
+      bankAddress: bankAddress.trim().toUpperCase(),
       accountNo: accountNo.trim(),
-      ifscCode: ifscCode.trim(),
+      ifscCode: ifscCode.trim().toUpperCase(),
       chequeNos: chequeNos.trim(),
+      place: place.trim(),
+      declarationDate,
+      remarks: remarks.trim(),
+      officeDate,
+      officeTime,
+      officePlace: officePlace.trim().toUpperCase(),
+      officerName: officerName.trim().toUpperCase(),
+      status,
       isArchived: false,
+      updatedAt: new Date().toISOString(),
     };
 
-    await setDoc(doc(db, 'dealers_application', id), newItem);
-    await logAudit('CREATE', 'dealers_application', id, `Added Dealership Form for ${newItem.firmName}`, profile);
+    if (!currentId) {
+      payload.createdAt = new Date().toISOString();
+    }
 
-    setShowModal(false);
-  };
+    try {
+      await setDoc(doc(db, 'dealers_application', id), payload, { merge: true });
+      await logAudit(
+        currentId ? 'UPDATE' : 'CREATE',
+        'dealers_application',
+        id,
+        `${currentId ? 'Updated' : 'Created'} Dealership Form for ${payload.firmName} (${payload.dealerCode})`,
+        profile
+      );
 
-  const handleDelete = async (item: DealershipFormItem) => {
-    if (window.confirm(t.confirmDelete)) {
-      await softDeleteRecord('dealers_application', item.id, item, profile);
+      setCurrentId(id);
+      setDealerCode(generatedCode);
+      setIsEditing(false);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err: any) {
+      alert(`Save error: ${err.message || err}`);
     }
   };
 
+  const handleDelete = async (id: string, name: string) => {
+    if (window.confirm(`Are you sure you want to delete Dealership Form for "${name}"?`)) {
+      try {
+        await deleteDoc(doc(db, 'dealers_application', id));
+        if (currentId === id) {
+          setViewMode('list');
+        }
+      } catch (err: any) {
+        alert('Delete failed: ' + err.message);
+      }
+    }
+  };
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setDealershipAddressPhoto(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const filteredDealers = dealers.filter((d) => {
+    const q = searchQuery.toLowerCase().trim();
+    const matchQuery =
+      !q ||
+      d.dealerCode.toLowerCase().includes(q) ||
+      d.firmName.toLowerCase().includes(q) ||
+      d.proprietorName.toLowerCase().includes(q) ||
+      d.village.toLowerCase().includes(q);
+
+    if (activeFilter === 'active') {
+      return matchQuery && d.status === 'Approved';
+    }
+    return matchQuery;
+  });
+
   return (
-    <div className="space-y-6">
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <Building className="w-6 h-6 text-rose-600" />
-            {t.dealer} (APPLICATION FOR DEALERSHIP)
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">डीलर्स अर्ज, बँक तपशील व फर्म रेकॉर्ड्स</p>
+    <div className="space-y-4">
+      {/* Top Bar: Search & Action Header (Only shown in List View) */}
+      {viewMode === 'list' && (
+        <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md flex items-center justify-between gap-3 no-print">
+          <div className="relative flex-1">
+            <Search className="w-5 h-5 absolute left-3.5 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by Dealer Code, Name..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-11 pr-4 py-2.5 text-sm rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-medium"
+            />
+          </div>
+
+          <button
+            onClick={() => {
+              resetForm();
+              setViewMode('form');
+            }}
+            className="flex items-center justify-center bg-red-600 hover:bg-red-700 text-white p-2.5 rounded-xl transition shadow-lg shrink-0 active:scale-95"
+            title="New Dealer Form"
+          >
+            <Plus className="w-6 h-6 stroke-[3.5px]" />
+          </button>
         </div>
+      )}
 
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>नवीन डीलर अर्ज जोडा</span>
-        </button>
-      </div>
+      {/* Success notification */}
+      {saveSuccess && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center justify-between no-print animate-fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="font-semibold">Dealership Form saved successfully!</span>
+          </div>
+          <button onClick={() => setSaveSuccess(false)} className="text-emerald-700">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {dealers.map(d => (
-          <div key={d.id} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2.5 py-0.5 rounded-full">
-                  Code: {d.dealerCode}
-                </span>
-                <h3 className="text-base font-bold text-slate-900 mt-1.5">{d.firmName}</h3>
-                <p className="text-xs text-slate-600 font-medium">संचालक: {d.proprietorName}</p>
+      {/* ======================= VIEW MODE: LIST ======================= */}
+      {viewMode === 'list' && (
+        <div className="space-y-4 no-print">
+          {/* Filter Pills matching screenshot */}
+          <div className="flex items-center gap-2 px-1">
+            <button
+              onClick={() => setActiveFilter('all')}
+              className={`px-5 py-1.5 rounded-lg text-xs font-black transition ${
+                activeFilter === 'all'
+                  ? 'bg-slate-900 text-white shadow-md'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              All Applications ({dealers.length})
+            </button>
+            <button
+              onClick={() => setActiveFilter('active')}
+              className={`px-5 py-1.5 rounded-lg text-xs font-black transition ${
+                activeFilter === 'active'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Active ({dealers.filter((d) => d.status === 'Approved').length})
+            </button>
+          </div>
+
+          {/* Cards List: Clean Single Line Dealer Code + Full Firm Name (No cutting) */}
+          <div className="space-y-2.5">
+            {filteredDealers.map((d) => (
+              <div
+                key={d.id}
+                onClick={() => setActionModalDealer(d)}
+                className="bg-white rounded-2xl border border-slate-200 hover:border-red-400 hover:shadow-md p-3.5 sm:p-4 transition-all cursor-pointer flex items-center justify-between gap-3 group relative overflow-hidden"
+              >
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <span className="text-xs font-black text-red-600 bg-red-50 border border-red-200 px-2.5 py-1 rounded-lg uppercase tracking-wider shrink-0 font-mono">
+                    {d.dealerCode || 'DEALER'}
+                  </span>
+                  
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm sm:text-base font-black text-slate-900 group-hover:text-red-600 transition-colors uppercase">
+                      {d.firmName || 'Unnamed Dealership'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs font-bold text-slate-400 group-hover:text-red-600 transition">
+                    👉
+                  </span>
+                </div>
               </div>
-              <button onClick={() => handleDelete(d)} className="text-slate-400 hover:text-rose-600 p-1">
-                <Trash2 className="w-4 h-4" />
+            ))}
+
+            {filteredDealers.length === 0 && (
+              <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-8 text-center text-slate-500">
+                <p className="text-sm font-semibold">No dealership applications found.</p>
+                <p className="text-xs text-slate-400 mt-1">Click "New Dealer Form" above to add the first application.</p>
+              </div>
+            )}
+          </div>
+
+          {/* Action Modal Dialog when clicking Dealer Name / Card */}
+          {actionModalDealer && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in no-print" onClick={() => setActionModalDealer(null)}>
+              <div className="bg-white rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4" onClick={(e) => e.stopPropagation()}>
+                <div className="border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-black text-red-600 bg-red-50 border border-red-200 px-2.5 py-0.5 rounded font-mono">
+                      {actionModalDealer.dealerCode || 'DEALER'}
+                    </span>
+                    <span className="text-xs font-bold text-slate-400 uppercase">डीलर तपशील</span>
+                  </div>
+                  <h3 className="text-base font-black text-slate-900 uppercase">
+                    {actionModalDealer.firmName}
+                  </h3>
+                  {actionModalDealer.responsiblePerson && (
+                    <p className="text-xs text-slate-600 font-bold mt-0.5">
+                      Person: {actionModalDealer.responsiblePerson} ({actionModalDealer.contactNumber})
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 gap-2.5">
+                  <button
+                    onClick={() => {
+                      const d = actionModalDealer;
+                      setActionModalDealer(null);
+                      loadDealerToForm(d, true);
+                    }}
+                    className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wide flex items-center justify-center gap-2 shadow-sm transition active:scale-95"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    <span>Edit Dealer Form (फॉर्म उघडा व एडिट करा)</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      const d = actionModalDealer;
+                      setActionModalDealer(null);
+                      loadDealerToForm(d, false);
+                      setTimeout(() => window.print(), 200);
+                    }}
+                    className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wide flex items-center justify-center gap-2 shadow-sm transition active:scale-95"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print / Download (प्रिंट किंवा डाऊनलोड करा)</span>
+                  </button>
+
+                  {(profile.role === 'owner' || profile.role === 'admin') && (
+                    <button
+                      onClick={() => {
+                        const d = actionModalDealer;
+                        setActionModalDealer(null);
+                        handleDelete(d.id, d.firmName);
+                      }}
+                      className="w-full py-3 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-black uppercase tracking-wide flex items-center justify-center gap-2 transition active:scale-95"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Delete Application (फॉर्म डिलीट करा)</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => setActionModalDealer(null)}
+                    className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase transition"
+                  >
+                    Close (रद्द करा)
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ======================= VIEW MODE: THE FULL STRUCTURED APPLICATION FORM ======================= */}
+      {viewMode === 'form' && (
+        <div className="space-y-4">
+          {/* Scrollable Container Form Sheet - Added overflow-x-auto for side-to-side scrolling on mobile */}
+          <div className="bg-white rounded-2xl border-2 border-slate-300 shadow-xl overflow-x-auto print:border-none print:shadow-none print:m-0 print:p-0">
+            {/* Top action toolbar inside form card */}
+            <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 flex items-center justify-between no-print sticky left-0 min-w-max">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                  {dealerCode || firmName || 'DEALERSHIP APPLICATION FORM'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {(profile.role === 'owner' || profile.role === 'admin') && (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing(!isEditing)}
+                    className={`p-2 rounded-lg text-xs font-bold transition shadow-sm border ${
+                      isEditing ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                    title={isEditing ? 'Viewing Mode' : 'Edit Mode'}
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
+                )}
+
+                {isEditing && (
+                  <button
+                    type="submit"
+                    form="dealer-application-form"
+                    className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-sm transition"
+                    title="Save Form"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Save</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleDownloadPdf}
+                  disabled={isGeneratingPdf}
+                  className="text-xs font-bold px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"
+                  title="Download A4 PDF Form"
+                >
+                  {isGeneratingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  <span>{isGeneratingPdf ? 'Generating...' : 'Download'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="p-2 rounded-lg bg-red-600 hover:bg-red-700 text-white flex items-center shadow-sm transition"
+                  title="Print Form"
+                >
+                  <Printer className="w-4 h-4" />
+                </button>
+
+                {currentId && (
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(currentId, firmName)}
+                    className="p-2 rounded-lg bg-white border border-slate-200 text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                    title="Delete Form"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <form id="dealer-application-form" onSubmit={handleSave} className="p-4 sm:p-6 space-y-0 text-[11px] min-w-[800px] sm:min-w-0 font-sans">
+              {/* Full Form Outer Border Wrapper */}
+              <div ref={printableFormRef} className="border-2 border-black bg-white shadow-sm">
+                {/* 1. Header Section - Logo (Left), Name (Center), Photo (Right) */}
+                <div className="p-4 relative bg-white border-b-2 border-black">
+                  <div className="flex items-center justify-between gap-4">
+                    {/* Company Logo (Left) */}
+                    <div className="w-24 h-24 flex items-center justify-center shrink-0">
+                      {logoUrl && (
+                        <img 
+                          src={logoUrl} 
+                          alt="Logo" 
+                          style={{ width: `${logoSize}px`, height: `${logoSize}px` }} 
+                          className="object-contain" 
+                        />
+                      )}
+                    </div>
+
+                    {/* Company Info (Center) */}
+                    <div className="flex-1 text-center space-y-1">
+                      <h1 className="text-2xl font-black text-red-600 uppercase tracking-tight leading-none">
+                        BLACKWORM AGRITECH PVT LTD
+                      </h1>
+                      <p className="text-[10px] font-black text-amber-500 uppercase tracking-tighter">
+                        AGRICULTURE WITH NEW PERSPECTIVE
+                      </p>
+                      <div className="text-[9px] text-black font-black leading-tight mt-2">
+                        <p>CIN : U01409PN2022PTC217246, GST No. 27AALCB3069J1ZC</p>
+                        <p>Address - Gat No. 17 Vijaynagar (Mhaisal), Tal - Miraj, Dist - Sangli. 416409.</p>
+                        <p className="flex items-center justify-center gap-4 mt-1">
+                          <span className="flex items-center gap-1 text-red-600"><Phone className="w-2.5 h-2.5" /> +91 7798716201</span>
+                          <span className="flex items-center gap-1 text-red-600 underline"><Mail className="w-2.5 h-2.5" /> blackwormagritechpvtltd@gmail.com</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Dealer/Officer Photo (Right) */}
+                    <div 
+                      onClick={() => isEditing && setShowPhotoModal(true)}
+                      className={`w-28 h-28 border-2 border-black bg-white flex items-center justify-center overflow-hidden relative group shrink-0 ${isEditing ? 'cursor-pointer hover:border-emerald-600' : ''}`}
+                      title={isEditing ? "Click to add or change photo" : undefined}
+                    >
+                       {dealershipAddressPhoto ? (
+                          <img src={dealershipAddressPhoto} className="w-full h-full object-cover" />
+                       ) : (
+                          <div className="text-center p-2 text-slate-400">
+                            <Camera className="w-8 h-8 mx-auto mb-1 opacity-40 text-black" />
+                            <span className="text-[7.5px] font-black uppercase tracking-tight text-black">Camera / Gallery</span>
+                          </div>
+                       )}
+                       {isEditing && (
+                         <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 flex items-center justify-center transition no-print">
+                            <Camera className="w-6 h-6 text-black/80" />
+                         </div>
+                       )}
+                    </div>
+
+                    {/* Hidden inputs for Camera and Gallery */}
+                    <input
+                      type="file"
+                      ref={cameraInputRef}
+                      className="hidden"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePhotoUpload}
+                    />
+                    <input
+                      type="file"
+                      ref={galleryInputRef}
+                      className="hidden"
+                      accept="image/*"
+                      onChange={handlePhotoUpload}
+                    />
+                  </div>
+                </div>
+
+                {/* 2. Red Section Title Banner */}
+                <div className="bg-red-500 text-white font-black px-3 py-1.5 flex items-center justify-center uppercase tracking-widest text-xs border-b-2 border-black">
+                  APPLICATION FOR DEALERSHIP
+                </div>
+
+                {/* 3. Dealer Data Green Header */}
+                <div className="bg-emerald-600 text-white font-bold px-3 py-1 flex items-center justify-center uppercase tracking-wider text-[10px] border-b-2 border-black">
+                  DEALER DATA
+                </div>
+
+                <div className="divide-y-2 divide-black bg-white border-b-2 border-black">
+                  {/* Row 1: Center & Shop Opening Date */}
+                  <div className="grid grid-cols-2 divide-x-2 divide-black">
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Center -</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={center}
+                          onChange={(e) => setCenter(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none uppercase"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Date -</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="date"
+                          disabled={!isEditing}
+                          value={shopOpeningDate}
+                          onChange={(e) => setShopOpeningDate(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Rows for Code, Village, Security Deposit - Center sub-grid structure */}
+                  <div className="grid grid-cols-2 divide-x-2 divide-black">
+                     <div className="bg-slate-50 flex items-center justify-center p-4 relative">
+                       <span className="text-slate-300 font-black text-xs uppercase text-center leading-tight">DEALER STAMP & ADDRESS</span>
+                     </div>
+                     <div className="divide-y-2 divide-black">
+                        <div className="flex items-center p-0 h-10">
+                          <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Code</span>
+                          <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                            <input
+                              type="text"
+                              disabled={!isEditing}
+                              value={dealerCode}
+                              onChange={(e) => setDealerCode(e.target.value)}
+                              className="w-full bg-transparent font-black text-red-600 focus:outline-none"
+                              placeholder="DEALER-004"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center p-0 h-10">
+                          <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Village</span>
+                          <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                            <input
+                              type="text"
+                              disabled={!isEditing}
+                              value={village}
+                              onChange={(e) => setVillage(e.target.value)}
+                              className="w-full bg-transparent font-black text-black focus:outline-none uppercase"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center p-0 h-10">
+                          <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Deposit</span>
+                          <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                            <input
+                              type="text"
+                              disabled={!isEditing}
+                              value={securityDeposit}
+                              onChange={(e) => setSecurityDeposit(e.target.value)}
+                              className="w-full bg-transparent font-black text-black focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                     </div>
+                  </div>
+
+                  {/* Row 3: Firm Name */}
+                  <div className="flex items-center p-0 h-10">
+                    <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Firm Name -</span>
+                    <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                      <input
+                        type="text"
+                        required
+                        disabled={!isEditing}
+                        value={firmName}
+                        onChange={(e) => setFirmName(e.target.value)}
+                        className="w-full bg-transparent font-black text-black focus:outline-none uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 4: Proprietor Name */}
+                  <div className="flex items-center p-0 h-10">
+                    <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Proprietor Name -</span>
+                    <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                      <input
+                        type="text"
+                        required
+                        disabled={!isEditing}
+                        value={proprietorName}
+                        onChange={(e) => setProprietorName(e.target.value)}
+                        className="w-full bg-transparent font-black text-black focus:outline-none uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 5: Contact Number & State */}
+                  <div className="grid grid-cols-2 divide-x-2 divide-black">
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 flex items-center gap-1 px-2 uppercase tracking-tighter text-[10px]">
+                        <Phone className="w-3 h-3 text-red-600" /> Contact -
+                      </span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="tel"
+                          required
+                          disabled={!isEditing}
+                          value={contactNumber}
+                          onChange={(e) => setContactNumber(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">State</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={stateName}
+                          onChange={(e) => setStateName(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none uppercase"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 6: E-mail ID */}
+                  <div className="flex items-center p-0 h-10">
+                    <span className="font-black text-black w-44 shrink-0 flex items-center gap-1 px-2 uppercase tracking-tighter">
+                      <Mail className="w-3 h-3 text-red-600" /> E-mail ID -
+                    </span>
+                    <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                      <input
+                        type="email"
+                        disabled={!isEditing}
+                        value={emailId}
+                        onChange={(e) => setEmailId(e.target.value)}
+                        className="w-full bg-transparent font-black text-black focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 7: Responsible Person & Contact */}
+                  <div className="grid grid-cols-2 divide-x-2 divide-black">
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">Responsible Person -</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={responsiblePerson}
+                          onChange={(e) => setResponsiblePerson(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none uppercase"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">Contact</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="tel"
+                          disabled={!isEditing}
+                          value={responsibleContact}
+                          onChange={(e) => setResponsibleContact(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 8: Aadhaar No & District */}
+                  <div className="grid grid-cols-2 divide-x-2 divide-black">
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Aadhaar No -</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={aadhaarNo}
+                          onChange={(e) => setAadhaarNo(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">District</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={district}
+                          onChange={(e) => setDistrict(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none uppercase"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 9: Pan No & Date of Birth */}
+                  <div className="grid grid-cols-2 divide-x-2 divide-black">
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Pan No -</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={panNo}
+                          onChange={(e) => setPanNo(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none font-mono uppercase"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">D.O.B.</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="date"
+                          disabled={!isEditing}
+                          value={dateOfBirth}
+                          onChange={(e) => setDateOfBirth(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 10: GST No & Pin Code */}
+                  <div className="grid grid-cols-2 divide-x-2 divide-black">
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">GST No -</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={gstNo}
+                          onChange={(e) => setGstNo(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none font-mono uppercase"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">Pin Code</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={pinCode}
+                          onChange={(e) => setPinCode(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. Bank Details Header */}
+                <div className="bg-emerald-600 text-white font-bold px-3 py-1 flex items-center justify-center uppercase tracking-wider text-[10px] border-b-2 border-black">
+                  BANK DETAILS
+                </div>
+
+                <div className="divide-y-2 divide-black bg-white border-b-2 border-black">
+                  <div className="flex items-center p-0 h-10">
+                    <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Bank Name -</span>
+                    <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                      <input
+                        type="text"
+                        disabled={!isEditing}
+                        value={bankName}
+                        onChange={(e) => setBankName(e.target.value)}
+                        className="w-full bg-transparent font-black text-black focus:outline-none uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center p-0 h-10">
+                    <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Bank Address -</span>
+                    <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                      <input
+                        type="text"
+                        disabled={!isEditing}
+                        value={bankAddress}
+                        onChange={(e) => setBankAddress(e.target.value)}
+                        className="w-full bg-transparent font-black text-black focus:outline-none uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 divide-x-2 divide-black">
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Account No -</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={accountNo}
+                          onChange={(e) => setAccountNo(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center p-0 h-10">
+                      <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">IFSC Code -</span>
+                      <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                        <input
+                          type="text"
+                          disabled={!isEditing}
+                          value={ifscCode}
+                          onChange={(e) => setIfscCode(e.target.value)}
+                          className="w-full bg-transparent font-black text-black focus:outline-none font-mono uppercase"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Security Cheque note box */}
+                  <div className="p-1 bg-amber-50 text-center border-b-2 border-black">
+                    <span className="text-[9px] font-black text-amber-900 italic uppercase">
+                      Security Cheque Details (Blank Cheque crossed on 'BLACKWORM AGRITECH PVT LTD'. Issue Nationalised bank cheque only.)
+                    </span>
+                  </div>
+
+                  <div className="flex items-center p-0 h-10">
+                    <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Cheque no -</span>
+                    <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
+                      <input
+                        type="text"
+                        disabled={!isEditing}
+                        value={chequeNos}
+                        onChange={(e) => setChequeNos(e.target.value)}
+                        className="w-full bg-transparent font-black text-black focus:outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 6. Declaration Section */}
+                <div className="bg-slate-600 text-white font-black px-3 py-1.5 flex items-center justify-center uppercase tracking-widest text-[11px] border-b-2 border-black">
+                  DECLARATION
+                </div>
+
+                <div className="p-3 bg-white space-y-6 border-b-2 border-black">
+                  <p className="text-[10px] text-black leading-tight text-justify font-bold uppercase italic">
+                    I / we certify that the foregoing information is correct and complete to the best of my/our knowledge and belief and nothing has been concealed. I shall abide to policies & procedure laid by company from time to time. If at any time, I / we have concealed any material / information or given any false details, our appointment shall be liable to summary termination without notice or compensation.
+                  </p>
+
+                  <div className="flex items-end justify-between gap-10 pt-4 border-t-2 border-black">
+                    {/* Dealer Stamp Area without box, just top line and Place/Date at bottom */}
+                    <div className="flex-1 h-36 p-2 flex flex-col justify-between relative bg-white">
+                      <div className="text-[9px] font-black text-black uppercase no-print">
+                        Dealer Stamp & Address
+                      </div>
+                      <div className="text-[9px] font-black text-black space-y-1 pt-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="shrink-0 uppercase font-black">Place -</span>
+                          <input
+                            type="text"
+                            disabled={!isEditing}
+                            value={officePlace || place}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setOfficePlace(val);
+                              setPlace(val);
+                            }}
+                            placeholder="SANGLI"
+                            className="bg-transparent font-black text-black uppercase focus:outline-none flex-1 max-w-[200px] border-b border-dashed border-slate-400 focus:border-black disabled:border-transparent py-0.5"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="shrink-0 uppercase font-black">Date -</span>
+                          <span className="font-black">
+                            {new Date(officeDate || new Date()).toLocaleDateString('en-GB')}. {new Date(`2000-01-01T${officeTime || '12:00'}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}.
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right pb-1 shrink-0 w-64">
+                      <div className="h-28 flex items-center justify-end">
+                        {/* Signature space */}
+                      </div>
+                      <div className="border-t-2 border-black pt-1 text-center">
+                        <span className="font-black text-black uppercase text-xs">Proprietor Sign</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer Section - Unified Office Use & Signature Area (No box around Office Use, Officer signature anchored to bottom line) */}
+                <div className="p-3 bg-white">
+                  <div className="flex justify-between items-end gap-6">
+                    {/* Office Use Section - Box border removed as requested */}
+                    <div className="flex-1 bg-white p-1">
+                      <div className="bg-slate-900 text-white text-[9px] font-black px-2 py-0.5 mb-2 inline-block uppercase">
+                        FOR OFFICE USE
+                      </div>
+                      
+                      <div className="space-y-1">
+                        <div className="pt-1">
+                          <span className="font-black text-black uppercase block text-[9px] mb-1 italic opacity-60 underline">Remarks :-</span>
+                          <textarea
+                            disabled={!isEditing}
+                            value={remarks}
+                            onChange={(e) => setRemarks(e.target.value)}
+                            className="w-full bg-transparent text-[10px] text-black focus:outline-none font-black uppercase leading-tight resize-none italic"
+                            rows={3}
+                            placeholder="WRITE REMARKS HERE..."
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Officer Signature Area - Placed cleanly against bottom border */}
+                    <div className="flex flex-col items-center shrink-0 w-64 pb-1">
+                      <div className="text-center w-full">
+                        <div className="text-xs font-black text-black uppercase mb-1">
+                          {profile.fullName || 'OFFICER'}
+                        </div>
+                        <div className="border-t-2 border-black w-full mb-1"></div>
+                        <div className="text-[10px] font-black text-black uppercase tracking-tight">
+                          Officer Name & Signature
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons Removed from bottom as requested */}
+            </form>
+          </div>
+        </div>
+      )}
+      {/* ======================= PHOTO SELECTION MODAL ======================= */}
+      {showPhotoModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 no-print animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-5 space-y-4 border border-slate-200">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700">
+                  <Camera className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">फोटो ॲड करा (Add Photo)</h3>
+                  <p className="text-[11px] text-slate-500">पर्याय निवडा (Choose an option)</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPhotoModal(false)}
+                className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-xs pt-3 border-t border-slate-100 text-slate-600">
-              <div><strong>गावक/Village:</strong> {d.village}</div>
-              <div><strong>जिल्हा/District:</strong> {d.district}</div>
-              <div><strong>मोबाईल:</strong> {d.contactNumber}</div>
-              <div><strong>GST No:</strong> {d.gstNo}</div>
+            <div className="space-y-2.5">
+              {/* Option 1: Direct Camera Capture */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPhotoModal(false);
+                  cameraInputRef.current?.click();
+                }}
+                className="w-full flex items-center gap-3 p-3.5 rounded-xl border-2 border-emerald-500/30 bg-emerald-50/50 hover:bg-emerald-100/70 text-emerald-950 font-bold transition text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-black">कॅमेऱ्याने थेट फोटो काढा</div>
+                  <div className="text-[10px] text-emerald-700 font-semibold">Take Live Photo / Open Camera</div>
+                </div>
+              </button>
+
+              {/* Option 2: Choose from Gallery / Files */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPhotoModal(false);
+                  galleryInputRef.current?.click();
+                }}
+                className="w-full flex items-center gap-3 p-3.5 rounded-xl border-2 border-blue-500/30 bg-blue-50/50 hover:bg-blue-100/70 text-blue-950 font-bold transition text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition">
+                  <ImageIcon className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-black">मोबाईल गॅलरीमधून निवडा</div>
+                  <div className="text-[10px] text-blue-700 font-semibold">Choose from Gallery / Files</div>
+                </div>
+              </button>
+
+              {/* Option 3: Remove photo (if existing) */}
+              {dealershipAddressPhoto && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDealershipAddressPhoto('');
+                    setShowPhotoModal(false);
+                  }}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl border border-red-200 bg-red-50/50 hover:bg-red-100 text-red-700 font-bold transition text-left text-xs"
+                >
+                  <Trash2 className="w-4 h-4 text-red-600" />
+                  <span>सध्याचा फोटो काढून टाका (Remove Photo)</span>
+                </button>
+              )}
             </div>
 
-            <div className="bg-slate-50 p-3 rounded-xl text-xs space-y-1">
-              <div className="font-bold text-slate-700 flex items-center gap-1.5">
-                <CreditCard className="w-3.5 h-3.5 text-rose-600" />
-                <span>बँक: {d.bankName}</span>
-              </div>
-              <p className="text-[11px] text-slate-500">Account No: {d.accountNo} | IFSC: {d.ifscCode}</p>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowPhotoModal(false)}
+                className="w-full py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition"
+              >
+                रद्द करा (Cancel)
+              </button>
             </div>
-          </div>
-        ))}
-      </div>
-
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto space-y-6">
-            <div className="flex justify-between items-center border-b pb-3">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">APPLICATION FOR DEALERSHIP</h3>
-                <p className="text-xs text-slate-500">Blackworm Agritech Pvt Ltd Dealership Form</p>
-              </div>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
-            </div>
-
-            <form onSubmit={handleSave} className="space-y-4 text-xs">
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Center</label>
-                  <input type="text" value={center} onChange={(e) => setCenter(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Dealer Code</label>
-                  <input type="text" value={dealerCode} onChange={(e) => setDealerCode(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Village</label>
-                  <input type="text" value={village} onChange={(e) => setVillage(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-              </div>
-
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">Firm Name (फर्मचे नाव) *</label>
-                <input type="text" required value={firmName} onChange={(e) => setFirmName(e.target.value)} className="w-full px-3 py-2 border rounded-xl font-bold" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Proprietor Name (संचालक) *</label>
-                  <input type="text" required value={proprietorName} onChange={(e) => setProprietorName(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Contact Number *</label>
-                  <input type="tel" required value={contactNumber} onChange={(e) => setContactNumber(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Email ID</label>
-                  <input type="email" value={emailId} onChange={(e) => setEmailId(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Aadhaar No</label>
-                  <input type="text" value={aadhaarNo} onChange={(e) => setAadhaarNo(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">PAN No</label>
-                  <input type="text" value={panNo} onChange={(e) => setPanNo(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">GST No</label>
-                  <input type="text" value={gstNo} onChange={(e) => setGstNo(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">District</label>
-                  <input type="text" value={district} onChange={(e) => setDistrict(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Pin Code</label>
-                  <input type="text" value={pinCode} onChange={(e) => setPinCode(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-              </div>
-
-              <div className="border-t pt-3 font-bold text-slate-800">BANK DETAILS</div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Bank Name</label>
-                  <input type="text" value={bankName} onChange={(e) => setBankName(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Account No</label>
-                  <input type="text" value={accountNo} onChange={(e) => setAccountNo(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">IFSC Code</label>
-                  <input type="text" value={ifscCode} onChange={(e) => setIfscCode(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Security Cheque Nos</label>
-                  <input type="text" value={chequeNos} onChange={(e) => setChequeNos(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
-                </div>
-              </div>
-
-              <div className="pt-3 flex gap-3">
-                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-2.5 rounded-xl border font-bold text-slate-600">{t.cancel}</button>
-                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 font-bold text-white">{t.save} Dealership Form</button>
-              </div>
-            </form>
           </div>
         </div>
       )}
