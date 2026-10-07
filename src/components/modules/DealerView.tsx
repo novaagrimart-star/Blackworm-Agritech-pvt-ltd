@@ -158,7 +158,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
       const element = printableFormRef.current;
       
       const canvas = await html2canvas(element, {
-        scale: 2.5, // Crisp high-definition render for sharp text and borders
+        scale: 3, // Even higher resolution
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff',
@@ -172,10 +172,27 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
         format: 'a4'
       });
 
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      const pageWidth = pdf.internal.pageSize.getWidth(); // 210
+      const pageHeight = pdf.internal.pageSize.getHeight(); // 297
       
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, Math.min(pdfHeight, 297));
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      
+      let finalWidth = imgWidth;
+      let finalHeight = imgHeight;
+      let xOffset = 0;
+      let yOffset = 0;
+
+      // STRICT ONE-PAGE FIT LOGIC
+      // If height is more than A4, scale down to fit height
+      if (imgHeight > pageHeight) {
+        const ratio = pageHeight / imgHeight;
+        finalHeight = pageHeight;
+        finalWidth = imgWidth * ratio;
+        xOffset = (pageWidth - finalWidth) / 2; // Center horizontally
+      }
+
+      pdf.addImage(imgData, 'JPEG', xOffset, yOffset, finalWidth, finalHeight);
       const sanitizedName = (firmName || dealerCode || 'Dealership_Form').replace(/[^a-zA-Z0-9_-]/g, '_');
       pdf.save(`${sanitizedName}.pdf`);
     } catch (err: any) {
@@ -448,21 +465,46 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-24">
+      {/* CSS Forcing One Page Print */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 0mm;
+          }
+          body {
+            background: white !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+          #dealer-application-form {
+            padding: 0 !important;
+            margin: 0 !important;
+            width: 100% !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+          /* Force container to fit height */
+          #printable-wrapper {
+            height: 297mm !important;
+            display: flex !important;
+            flex-direction: column !important;
+            border-width: 1px !important;
+          }
+          /* Scale down slightly to ensure zero cuts */
+          #printable-wrapper {
+            zoom: 0.94;
+            -moz-transform: scale(0.94);
+            -moz-transform-origin: top center;
+          }
+        }
+      `}} />
+      
       {/* Top Bar: Search & Action Header (Only shown in List View) */}
       {viewMode === 'list' && (
-        <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md flex items-center justify-between gap-3 no-print">
-          <div className="relative flex-1">
-            <Search className="w-5 h-5 absolute left-3.5 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by Dealer Code, Name..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-11 pr-4 py-2.5 text-sm rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-medium"
-            />
-          </div>
-
+        <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md flex items-center gap-3 no-print">
           <button
             onClick={() => {
               resetForm();
@@ -473,6 +515,17 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
           >
             <Plus className="w-6 h-6 stroke-[3.5px]" />
           </button>
+
+          <div className="relative flex-1">
+            <Search className="w-5 h-5 absolute left-3.5 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by Dealer Code, Name..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-11 pr-4 py-2.5 text-sm rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-medium"
+            />
+          </div>
         </div>
       )}
 
@@ -698,14 +751,14 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
               </div>
             </div>
 
-            <form id="dealer-application-form" onSubmit={handleSave} className="p-4 sm:p-6 space-y-0 text-[11px] min-w-[800px] sm:min-w-0 font-sans">
+            <form id="dealer-application-form" onSubmit={handleSave} className="p-2 sm:p-4 space-y-0 text-[10px] min-w-[750px] sm:min-w-0 font-sans">
               {/* Full Form Outer Border Wrapper */}
-              <div ref={printableFormRef} className="border-2 border-black bg-white shadow-sm">
+              <div id="printable-wrapper" ref={printableFormRef} className="border-2 border-black bg-white shadow-sm overflow-hidden">
                 {/* 1. Header Section - Logo (Left), Name (Center), Photo (Right) */}
-                <div className="p-4 relative bg-white border-b-2 border-black">
-                  <div className="flex items-center justify-between gap-4">
+                <div className="p-3 relative bg-white border-b-2 border-black">
+                  <div className="flex items-center justify-between gap-3">
                     {/* Company Logo (Left) */}
-                    <div className="w-24 h-24 flex items-center justify-center shrink-0">
+                    <div className="w-20 h-20 flex items-center justify-center shrink-0">
                       {logoUrl && (
                         <img 
                           src={logoUrl} 
@@ -721,7 +774,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                       <h1 className="text-2xl font-black text-red-600 uppercase tracking-tight leading-none">
                         BLACKWORM AGRITECH PVT LTD
                       </h1>
-                      <p className="text-[10px] font-black text-amber-500 uppercase tracking-tighter">
+                      <p className="text-[10px] font-black text-[#D4AF37] uppercase tracking-tighter">
                         AGRICULTURE WITH NEW PERSPECTIVE
                       </p>
                       <div className="text-[9px] text-black font-black leading-tight mt-2">
@@ -737,7 +790,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                     {/* Dealer/Officer Photo (Right) */}
                     <div 
                       onClick={() => isEditing && setShowPhotoModal(true)}
-                      className={`w-28 h-28 border-2 border-black bg-white flex items-center justify-center overflow-hidden relative group shrink-0 ${isEditing ? 'cursor-pointer hover:border-emerald-600' : ''}`}
+                      className={`w-28 h-24 border-2 border-black bg-white flex items-center justify-center overflow-hidden relative group shrink-0 ${isEditing ? 'cursor-pointer hover:border-emerald-600' : ''}`}
                       title={isEditing ? "Click to add or change photo" : undefined}
                     >
                        {dealershipAddressPhoto ? (
@@ -775,19 +828,19 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                 </div>
 
                 {/* 2. Red Section Title Banner */}
-                <div className="bg-red-500 text-white font-black px-3 py-1.5 flex items-center justify-center uppercase tracking-widest text-xs border-b-2 border-black">
+                <div className="bg-red-400 text-white font-black px-3 py-1.5 flex items-center justify-center uppercase tracking-widest text-xs border-b-2 border-black">
                   APPLICATION FOR DEALERSHIP
                 </div>
 
                 {/* 3. Dealer Data Green Header */}
-                <div className="bg-emerald-600 text-white font-bold px-3 py-1 flex items-center justify-center uppercase tracking-wider text-[10px] border-b-2 border-black">
+                <div className="bg-emerald-500 text-white font-bold px-3 py-1 flex items-center justify-center uppercase tracking-wider text-[10px] border-b-2 border-black">
                   DEALER DATA
                 </div>
 
                 <div className="divide-y-2 divide-black bg-white border-b-2 border-black">
                   {/* Row 1: Center & Shop Opening Date */}
                   <div className="grid grid-cols-2 divide-x-2 divide-black">
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Center -</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -800,7 +853,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                       </div>
                     </div>
 
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Date -</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -817,10 +870,10 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                   {/* Rows for Code, Village, Security Deposit - Center sub-grid structure */}
                   <div className="grid grid-cols-2 divide-x-2 divide-black">
                      <div className="bg-slate-50 flex items-center justify-center p-4 relative">
-                       <span className="text-slate-300 font-black text-xs uppercase text-center leading-tight">DEALER STAMP & ADDRESS</span>
+                       <span className="text-slate-300 font-black text-[9px] uppercase text-center leading-tight">DEALER STAMP & ADDRESS</span>
                      </div>
                      <div className="divide-y-2 divide-black">
-                        <div className="flex items-center p-0 h-10">
+                        <div className="flex items-center p-0 h-9">
                           <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Code</span>
                           <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                             <input
@@ -833,7 +886,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                             />
                           </div>
                         </div>
-                        <div className="flex items-center p-0 h-10">
+                        <div className="flex items-center p-0 h-9">
                           <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Village</span>
                           <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                             <input
@@ -845,7 +898,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                             />
                           </div>
                         </div>
-                        <div className="flex items-center p-0 h-10">
+                        <div className="flex items-center p-0 h-9">
                           <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Deposit</span>
                           <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                             <input
@@ -861,7 +914,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                   </div>
 
                   {/* Row 3: Firm Name */}
-                  <div className="flex items-center p-0 h-10">
+                  <div className="flex items-center p-0 h-9">
                     <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Firm Name -</span>
                     <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                       <input
@@ -876,7 +929,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                   </div>
 
                   {/* Row 4: Proprietor Name */}
-                  <div className="flex items-center p-0 h-10">
+                  <div className="flex items-center p-0 h-9">
                     <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Proprietor Name -</span>
                     <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                       <input
@@ -892,7 +945,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
 
                   {/* Row 5: Contact Number & State */}
                   <div className="grid grid-cols-2 divide-x-2 divide-black">
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 flex items-center gap-1 px-2 uppercase tracking-tighter text-[10px]">
                         <Phone className="w-3 h-3 text-red-600" /> Contact -
                       </span>
@@ -907,7 +960,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                         />
                       </div>
                     </div>
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">State</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -922,7 +975,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                   </div>
 
                   {/* Row 6: E-mail ID */}
-                  <div className="flex items-center p-0 h-10">
+                  <div className="flex items-center p-0 h-9">
                     <span className="font-black text-black w-44 shrink-0 flex items-center gap-1 px-2 uppercase tracking-tighter">
                       <Mail className="w-3 h-3 text-red-600" /> E-mail ID -
                     </span>
@@ -939,7 +992,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
 
                   {/* Row 7: Responsible Person & Contact */}
                   <div className="grid grid-cols-2 divide-x-2 divide-black">
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">Responsible Person -</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -951,7 +1004,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                         />
                       </div>
                     </div>
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">Contact</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -967,7 +1020,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
 
                   {/* Row 8: Aadhaar No & District */}
                   <div className="grid grid-cols-2 divide-x-2 divide-black">
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Aadhaar No -</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -979,7 +1032,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                         />
                       </div>
                     </div>
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">District</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -995,7 +1048,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
 
                   {/* Row 9: Pan No & Date of Birth */}
                   <div className="grid grid-cols-2 divide-x-2 divide-black">
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Pan No -</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -1007,7 +1060,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                         />
                       </div>
                     </div>
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">D.O.B.</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -1023,7 +1076,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
 
                   {/* Row 10: GST No & Pin Code */}
                   <div className="grid grid-cols-2 divide-x-2 divide-black">
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">GST No -</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -1035,7 +1088,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                         />
                       </div>
                     </div>
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter text-[10px]">Pin Code</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -1051,12 +1104,12 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                 </div>
 
                 {/* 5. Bank Details Header */}
-                <div className="bg-emerald-600 text-white font-bold px-3 py-1 flex items-center justify-center uppercase tracking-wider text-[10px] border-b-2 border-black">
+                <div className="bg-emerald-500 text-white font-bold px-3 py-1 flex items-center justify-center uppercase tracking-wider text-[10px] border-b-2 border-black">
                   BANK DETAILS
                 </div>
 
                 <div className="divide-y-2 divide-black bg-white border-b-2 border-black">
-                  <div className="flex items-center p-0 h-10">
+                  <div className="flex items-center p-0 h-9">
                     <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Bank Name -</span>
                     <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                       <input
@@ -1069,7 +1122,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                     </div>
                   </div>
 
-                  <div className="flex items-center p-0 h-10">
+                  <div className="flex items-center p-0 h-9">
                     <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Bank Address -</span>
                     <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                       <input
@@ -1083,7 +1136,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                   </div>
 
                   <div className="grid grid-cols-2 divide-x-2 divide-black">
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Account No -</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -1095,7 +1148,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                         />
                       </div>
                     </div>
-                    <div className="flex items-center p-0 h-10">
+                    <div className="flex items-center p-0 h-9">
                       <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">IFSC Code -</span>
                       <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                         <input
@@ -1116,7 +1169,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                     </span>
                   </div>
 
-                  <div className="flex items-center p-0 h-10">
+                  <div className="flex items-center p-0 h-9">
                     <span className="font-black text-black w-44 shrink-0 px-2 uppercase tracking-tighter">Cheque no -</span>
                     <div className="flex-1 border-l-2 border-black h-full flex items-center px-3">
                       <input
@@ -1131,7 +1184,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                 </div>
 
                 {/* 6. Declaration Section */}
-                <div className="bg-slate-600 text-white font-black px-3 py-1.5 flex items-center justify-center uppercase tracking-widest text-[11px] border-b-2 border-black">
+                <div className="bg-slate-500 text-white font-black px-3 py-1.5 flex items-center justify-center uppercase tracking-widest text-[11px] border-b-2 border-black">
                   DECLARATION
                 </div>
 
@@ -1142,7 +1195,10 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
 
                   <div className="flex items-end justify-between gap-10 pt-4 border-t-2 border-black">
                     {/* Dealer Stamp Area without box, just top line and Place/Date at bottom */}
-                    <div className="flex-1 h-36 p-2 flex flex-col justify-between relative bg-white">
+                    <div className="flex-1 h-32 p-2 flex flex-col justify-between relative bg-white">
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.08] no-print">
+                        <span className="text-2xl font-black uppercase rotate-[-15deg] tracking-widest">DEALER STAMP & ADDRESS</span>
+                      </div>
                       <div className="text-[9px] font-black text-black uppercase no-print">
                         Dealer Stamp & Address
                       </div>
@@ -1172,7 +1228,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                     </div>
 
                     <div className="text-right pb-1 shrink-0 w-64">
-                      <div className="h-28 flex items-center justify-end">
+                      <div className="h-24 flex items-center justify-end">
                         {/* Signature space */}
                       </div>
                       <div className="border-t-2 border-black pt-1 text-center">
@@ -1260,7 +1316,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                 }}
                 className="w-full flex items-center gap-3 p-3.5 rounded-xl border-2 border-emerald-500/30 bg-emerald-50/50 hover:bg-emerald-100/70 text-emerald-950 font-bold transition text-left group"
               >
-                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition">
+                <div className="w-10 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition">
                   <Camera className="w-5 h-5" />
                 </div>
                 <div>
@@ -1278,7 +1334,7 @@ export const DealerView: React.FC<Props> = ({ profile }) => {
                 }}
                 className="w-full flex items-center gap-3 p-3.5 rounded-xl border-2 border-blue-500/30 bg-blue-50/50 hover:bg-blue-100/70 text-blue-950 font-bold transition text-left group"
               >
-                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition">
+                <div className="w-10 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition">
                   <ImageIcon className="w-5 h-5" />
                 </div>
                 <div>

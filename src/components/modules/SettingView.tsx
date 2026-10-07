@@ -16,7 +16,7 @@ export const SettingView: React.FC<Props> = ({ profile, lang, onLogout }) => {
   const t = translations[lang];
   const [deletedItems, setDeletedItems] = useState<DeletedRecordItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'trash' | 'audit' | 'general' | 'branding'>('trash');
+  const [activeTab, setActiveTab] = useState<'trash' | 'branding'>('trash');
   const [logoUrl, setLogoUrl] = useState<string>('');
   const [logoSize, setLogoSize] = useState<number>(80);
   const [isSavingLogo, setIsSavingLogo] = useState(false);
@@ -124,20 +124,6 @@ export const SettingView: React.FC<Props> = ({ profile, lang, onLogout }) => {
           <span>Recycle Bin ({deletedItems.length})</span>
         </button>
         <button
-          onClick={() => setActiveTab('audit')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'audit' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
-        >
-          <History className="w-4 h-4" />
-          <span>Audit Logs ({auditLogs.length})</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('general')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'general' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
-        >
-          <HardDrive className="w-4 h-4" />
-          <span>Storage & Sync</span>
-        </button>
-        <button
           onClick={() => setActiveTab('branding')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'branding' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
         >
@@ -182,51 +168,6 @@ export const SettingView: React.FC<Props> = ({ profile, lang, onLogout }) => {
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {activeTab === 'audit' && (
-        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-          <div className="p-4 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-700">
-            System Audit History
-          </div>
-          <div className="divide-y divide-slate-100 max-h-[60vh] overflow-y-auto text-xs">
-            {auditLogs.map(log => (
-              <div key={log.id} className="p-4 flex items-center justify-between hover:bg-slate-50">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      log.action === 'CREATE' ? 'bg-emerald-50 text-emerald-700' :
-                      log.action === 'UPDATE' ? 'bg-blue-50 text-blue-700' :
-                      log.action === 'RESTORE' ? 'bg-purple-50 text-purple-700' : 'bg-rose-50 text-rose-700'
-                    }`}>
-                      {log.action}
-                    </span>
-                    <span className="font-bold text-slate-800">{log.collection}</span>
-                  </div>
-                  <p className="text-slate-600 mt-1">{log.recordSummary}</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">By: {log.performedByName}</p>
-                </div>
-                <span className="text-[11px] text-slate-400 shrink-0">{new Date(log.timestamp).toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'general' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 text-xs">
-          <h3 className="text-sm font-bold text-slate-900">System Information</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="p-4 bg-slate-50 rounded-xl space-y-1">
-              <span className="text-slate-400 block">Database</span>
-              <span className="font-bold text-slate-800 font-mono">Firestore (Sync Active)</span>
-            </div>
-            <div className="p-4 bg-slate-50 rounded-xl space-y-1">
-              <span className="text-slate-400 block">Status</span>
-              <span className="font-bold text-emerald-600 font-mono">ONLINE</span>
-            </div>
-          </div>
         </div>
       )}
 

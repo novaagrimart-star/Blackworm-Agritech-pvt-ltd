@@ -563,7 +563,15 @@ export const UserManagementView: React.FC<Props> = ({ profile, lang }) => {
     <div className="space-y-4 font-sans">
       {/* ======================= TOP BAR (LIST VIEW) ======================= */}
       {viewMode === 'list' && (
-        <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md flex items-center justify-between gap-3 no-print">
+        <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md flex items-center gap-3 no-print">
+          <button
+            onClick={() => resetForm()}
+            className="flex items-center justify-center bg-red-600 hover:bg-red-700 text-white p-2.5 rounded-xl transition shadow-lg shrink-0 active:scale-95"
+            title="New User Form"
+          >
+            <UserPlus className="w-6 h-6 stroke-[3.5px]" />
+          </button>
+
           <div className="relative flex-1">
             <Search className="w-5 h-5 absolute left-3.5 top-2.5 text-slate-400" />
             <input
@@ -574,14 +582,6 @@ export const UserManagementView: React.FC<Props> = ({ profile, lang }) => {
               className="w-full pl-11 pr-4 py-2.5 text-sm rounded-xl border border-slate-100 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-medium"
             />
           </div>
-
-          <button
-            onClick={() => resetForm()}
-            className="flex items-center justify-center bg-red-600 hover:bg-red-700 text-white p-2.5 rounded-xl transition shadow-lg shrink-0 active:scale-95"
-            title="New User Form"
-          >
-            <UserPlus className="w-6 h-6 stroke-[3.5px]" />
-          </button>
         </div>
       )}
 

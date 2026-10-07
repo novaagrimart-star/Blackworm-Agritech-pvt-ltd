@@ -86,6 +86,21 @@ export const CollectionView: React.FC<Props> = ({ profile, lang }) => {
       updatedAt: new Date().toISOString(),
     });
 
+    // Create a specific collection entry for daily tracking
+    const colEntryRef = doc(collection(db, 'collection_entries'));
+    await setDoc(colEntryRef, {
+      id: colEntryRef.id,
+      orderId: selectedOrder.id,
+      orderNumber: selectedOrder.orderNumber,
+      dealerName: selectedOrder.dealerName,
+      amount: payVal,
+      paymentMode: payMode,
+      collectedByUid: profile.uid,
+      collectedByName: profile.fullName || 'Officer',
+      date: new Date().toISOString().slice(0, 10),
+      createdAt: new Date().toISOString()
+    });
+
     await logAudit('UPDATE', 'orders', selectedOrder.id, `Payment received: ₹${payVal} via ${payMode}. New Balance: ₹${newBalance}`, profile);
 
     setShowPayModal(false);

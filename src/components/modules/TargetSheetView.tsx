@@ -45,7 +45,7 @@ interface YearlySheet {
   lastYearCollection: number;
   salesTarget: number;
   lastYearOutstanding: number;
-  outstandingPercent: number;
+  collectionPercent: number; // Percentage for current year collection target
   months: MonthlyData[];
 }
 
@@ -114,48 +114,131 @@ export const TargetSheetView: React.FC<Props> = ({ profile, lang }) => {
   // Fetch or init sheet for selected user
   useEffect(() => {
     setLoading(true);
-    const sheetId = `yearly_${selectedUserId}_2026_27`;
-    const unsub = onSnapshot(doc(db, 'yearly_targets', sheetId), (docSnap) => {
-      if (docSnap.exists()) {
-        setYearlySheet(docSnap.data() as YearlySheet);
-      } else {
-        const selectedUser = users.find(u => u.uid === selectedUserId) || profile;
-        const newSheet: YearlySheet = {
-          id: sheetId,
+    const selectedUser = users.find(u => u.uid === selectedUserId) || profile;
+    const isOwner = selectedUser.role === 'owner';
+
+    if (isOwner) {
+      // Aggregation logic for owner
+      const q = query(collection(db, 'yearly_targets'));
+      const unsub = onSnapshot(q, (snap) => {
+        const allSheets: YearlySheet[] = [];
+        snap.forEach(d => {
+          const data = d.data() as YearlySheet;
+          // Only aggregate sheets that are NOT owners (to avoid self-recursion or circular summing)
+          // We look up the user for this sheet to check role
+          const sheetUser = users.find(u => u.uid === data.userId);
+          if (sheetUser && sheetUser.role !== 'owner') {
+            allSheets.push(data);
+          }
+        });
+
+        // Sum everything up
+        const consolidatedSheet: YearlySheet = {
+          id: `consolidated_owner_${selectedUserId}`,
           userId: selectedUserId,
           fullName: selectedUser.fullName || selectedUser.uid,
-          designation: selectedUser.designation || 'FIELD OFFICER',
-          center: selectedUser.center || '',
+          designation: 'CONSOLIDATED (TOTAL)',
+          center: 'ALL CENTERS',
           year: '2026-27',
-          lastYearSale: 0,
-          lastYearCollection: 0,
-          salesTarget: 0,
-          lastYearOutstanding: 0,
-          outstandingPercent: 10,
-          months: monthsList.map(m => ({
-            month: m,
-            target: 0,
-            achievement: 0,
-            collection: 0,
-            actualCollection: 0
-          }))
+          lastYearSale: allSheets.reduce((acc, s) => acc + (s.lastYearSale || 0), 0),
+          lastYearCollection: allSheets.reduce((acc, s) => acc + (s.lastYearCollection || 0), 0),
+          salesTarget: allSheets.reduce((acc, s) => acc + (s.salesTarget || 0), 0),
+          lastYearOutstanding: allSheets.reduce((acc, s) => acc + (s.lastYearOutstanding || 0), 0),
+          collectionPercent: 0, // Not applicable for sum
+          months: monthsList.map(mName => {
+            const mData = {
+              month: mName,
+              target: 0,
+              achievement: 0,
+              collection: 0,
+              actualCollection: 0
+            };
+            allSheets.forEach(s => {
+              const sm = s.months.find(month => month.month === mName);
+              if (sm) {
+                mData.target += (sm.target || 0);
+                mData.achievement += (sm.achievement || 0);
+                mData.collection += (sm.collection || 0);
+                mData.actualCollection += (sm.actualCollection || 0);
+              }
+            });
+            return mData;
+          })
         };
-        setYearlySheet(newSheet);
-      }
-      setLoading(false);
-    });
-    return () => unsub();
-  }, [selectedUserId, users]);
+        setYearlySheet(consolidatedSheet);
+        setLoading(false);
+      });
+      return () => unsub();
+    } else {
+      // Regular fetching for individual users
+      const sheetId = `yearly_${selectedUserId}_2026_27`;
+      const unsub = onSnapshot(doc(db, 'yearly_targets', sheetId), (docSnap) => {
+        if (docSnap.exists()) {
+          setYearlySheet(docSnap.data() as YearlySheet);
+        } else {
+          const newSheet: YearlySheet = {
+            id: sheetId,
+            userId: selectedUserId,
+            fullName: selectedUser.fullName || selectedUser.uid,
+            designation: selectedUser.designation || 'FIELD OFFICER',
+            center: selectedUser.center || '',
+            year: '2026-27',
+            lastYearSale: 0,
+            lastYearCollection: 0,
+            salesTarget: 0,
+            lastYearOutstanding: 0,
+            collectionPercent: 40,
+            months: monthsList.map(m => ({
+              month: m,
+              target: 0,
+              achievement: 0,
+              collection: 0,
+              actualCollection: 0
+            }))
+          };
+          setYearlySheet(newSheet);
+        }
+        setLoading(false);
+      });
+      return () => unsub();
+    }
+  }, [selectedUserId, users, profile]);
 
   const updateSheet = (updates: Partial<YearlySheet>) => {
     if (!sheet) return;
-    setYearlySheet({ ...sheet, ...updates });
+    const selectedUser = users.find(u => u.uid === selectedUserId) || profile;
+    if (selectedUser.role === 'owner') return; // Cannot edit consolidated sheet
+
+    let newSheet = { ...sheet, ...updates };
+    
+    // If collectionPercent updated, update all months' collection targets
+    if (updates.hasOwnProperty('collectionPercent')) {
+      const perc = Number(updates.collectionPercent) || 0;
+      newSheet.months = newSheet.months.map(m => ({
+        ...m,
+        collection: Number((m.achievement * (perc / 100)).toFixed(2))
+      }));
+    }
+    
+    setYearlySheet(newSheet);
   };
 
   const updateMonth = (index: number, updates: Partial<MonthlyData>) => {
     if (!sheet) return;
+    const selectedUser = users.find(u => u.uid === selectedUserId) || profile;
+    if (selectedUser.role === 'owner') return; // Cannot edit consolidated sheet
+
     const newMonths = [...sheet.months];
-    newMonths[index] = { ...newMonths[index], ...updates };
+    let monthUpdate = { ...newMonths[index], ...updates };
+    
+    // If achievement updated, auto-calculate collection target based on percentage
+    if (updates.hasOwnProperty('achievement')) {
+      const ach = Number(updates.achievement) || 0;
+      const perc = sheet.collectionPercent || 0;
+      monthUpdate.collection = Number((ach * (perc / 100)).toFixed(2));
+    }
+    
+    newMonths[index] = monthUpdate;
     setYearlySheet({ ...sheet, months: newMonths });
   };
 
@@ -241,8 +324,21 @@ export const TargetSheetView: React.FC<Props> = ({ profile, lang }) => {
     actual: Q1.actual + Q2.actual + Q3.actual + Q4.actual
   };
 
+  const selectedUser = users.find(u => u.uid === selectedUserId) || profile;
+  const isOwnerView = selectedUser.role === 'owner';
+
   return (
     <div className="space-y-4 font-sans pb-12">
+      <style dangerouslySetInnerHTML={{ __html: `
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        input[type=number] {
+          -moz-appearance: textfield;
+        }
+      ` }} />
       {/* Top Action Toolbar */}
       <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md flex flex-col sm:flex-row items-center justify-between gap-3 no-print">
         {/* User Selector Dropdown */}
@@ -264,15 +360,23 @@ export const TargetSheetView: React.FC<Props> = ({ profile, lang }) => {
 
         {/* Action Buttons: Save, Download, Print */}
         <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-          <button 
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
-            title="Save Target Sheet"
-          >
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-            <span>Save</span>
-          </button>
+          {(() => {
+            const selectedUser = users.find(u => u.uid === selectedUserId) || profile;
+            if (selectedUser.role !== 'owner') {
+              return (
+                <button 
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
+                  title="Save Target Sheet"
+                >
+                  {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  <span>Save</span>
+                </button>
+              );
+            }
+            return null;
+          })()}
 
           <button
             type="button"
@@ -369,91 +473,124 @@ export const TargetSheetView: React.FC<Props> = ({ profile, lang }) => {
             </span>
           </div>
 
-          {/* 3. Side-by-Side Metadata Section (Box 1 on Left, Box 2 on Right in a Single Bordered Box) */}
-          <div className="grid grid-cols-2 divide-x-2 divide-black border-b-2 border-black bg-white text-[11px]">
-            {/* Left Box (Box 1): Name of Officer, Designation, Center */}
+          {/* 3. Side-by-Side Metadata Section (3-Column Grid for better fit) */}
+          <div className="grid grid-cols-3 divide-x-2 divide-black border-b-2 border-black bg-white text-[10px]">
+            {/* Column 1: Basic Info */}
             <div className="divide-y-2 divide-black">
               <div className="flex items-center p-0 h-10">
-                <span className="font-black text-black w-36 sm:w-40 shrink-0 px-2 uppercase tracking-tighter">Name of Officer -</span>
-                <div className="flex-1 border-l-2 border-black h-full flex items-center px-2.5">
-                  <input 
+                <span className="font-black text-black w-24 shrink-0 px-2 uppercase tracking-tighter">Officer -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center px-1">
+                  <input disabled={isOwnerView} 
                     type="text" 
                     value={sheet.fullName} 
                     onChange={e => updateSheet({ fullName: e.target.value.toUpperCase() })} 
-                    placeholder="OFFICER NAME"
                     className="w-full bg-transparent font-black text-black uppercase focus:outline-none text-center" 
                   />
                 </div>
               </div>
 
               <div className="flex items-center p-0 h-10">
-                <span className="font-black text-black w-36 sm:w-40 shrink-0 px-2 uppercase tracking-tighter">Designation -</span>
-                <div className="flex-1 border-l-2 border-black h-full flex items-center px-2.5">
-                  <input 
+                <span className="font-black text-black w-24 shrink-0 px-2 uppercase tracking-tighter">Designation -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center px-1">
+                  <input disabled={isOwnerView} 
                     type="text" 
                     value={sheet.designation} 
                     onChange={e => updateSheet({ designation: e.target.value.toUpperCase() })} 
-                    placeholder="FIELD OFFICER"
-                    className="w-full bg-transparent font-black text-black uppercase focus:outline-none text-center" 
+                    className="w-full bg-transparent font-black text-black uppercase focus:outline-none text-center text-[9px]" 
                   />
                 </div>
               </div>
 
               <div className="flex items-center p-0 h-10">
-                <span className="font-black text-black w-36 sm:w-40 shrink-0 px-2 uppercase tracking-tighter">Center (HQ) -</span>
-                <div className="flex-1 border-l-2 border-black h-full flex items-center px-2.5">
-                  <input 
+                <span className="font-black text-black w-24 shrink-0 px-2 uppercase tracking-tighter">Center (HQ) -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center px-1">
+                  <input disabled={isOwnerView} 
                     type="text" 
                     value={sheet.center} 
                     onChange={e => updateSheet({ center: e.target.value.toUpperCase() })} 
-                    placeholder="SANGLI / TASGAON" 
                     className="w-full bg-transparent font-black text-black uppercase focus:outline-none text-center" 
                   />
                 </div>
               </div>
             </div>
 
-            {/* Right Box (Box 2): Last Year Sale, Sales Target, Last Year Outstanding */}
+            {/* Column 2: Sales Data */}
             <div className="divide-y-2 divide-black">
               <div className="flex items-center p-0 h-10">
-                <span className="font-black text-black w-44 sm:w-48 shrink-0 px-2 uppercase tracking-tighter">Last Year Sale 2025-26 -</span>
-                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-2.5">
-                  <input 
+                <span className="font-black text-black w-28 shrink-0 px-2 uppercase tracking-tighter">L.Y. Sale -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-1">
+                  <input disabled={isOwnerView} 
                     type="number" 
                     value={sheet.lastYearSale || ''} 
                     onChange={e => updateSheet({ lastYearSale: Number(e.target.value) })} 
-                    placeholder="0"
                     className="w-full bg-transparent font-black text-black focus:outline-none font-mono text-center" 
                   />
-                  <span className="font-black text-black text-[10px] uppercase ml-1 shrink-0">Lakh</span>
+                  <span className="font-black text-black text-[8px] uppercase ml-0.5 shrink-0">Lakh</span>
                 </div>
               </div>
 
               <div className="flex items-center p-0 h-10 bg-red-50/50">
-                <span className="font-black text-red-600 w-44 sm:w-48 shrink-0 px-2 uppercase tracking-tighter">Sales Target 2026-27 -</span>
-                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-2.5">
-                  <input 
+                <span className="font-black text-red-600 w-28 shrink-0 px-2 uppercase tracking-tighter">Target -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-1">
+                  <input disabled={isOwnerView} 
                     type="number" 
                     value={sheet.salesTarget || ''} 
                     onChange={e => updateSheet({ salesTarget: Number(e.target.value) })} 
-                    placeholder="0"
                     className="w-full bg-transparent font-black text-red-600 focus:outline-none font-mono text-center" 
                   />
-                  <span className="font-black text-red-600 text-[10px] uppercase ml-1 shrink-0">Lakh</span>
+                  <span className="font-black text-red-600 text-[8px] uppercase ml-0.5 shrink-0">Lakh</span>
                 </div>
               </div>
 
               <div className="flex items-center p-0 h-10">
-                <span className="font-black text-black w-44 sm:w-48 shrink-0 px-2 uppercase tracking-tighter">Last Year Outstanding -</span>
-                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-2.5">
-                  <input 
+                <span className="font-black text-black w-28 shrink-0 px-2 uppercase tracking-tighter">L.Y. Outstd -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-1">
+                  <input disabled={isOwnerView} 
                     type="number" 
                     value={sheet.lastYearOutstanding || ''} 
                     onChange={e => updateSheet({ lastYearOutstanding: Number(e.target.value) })} 
-                    placeholder="0"
                     className="w-full bg-transparent font-black text-black focus:outline-none font-mono text-center" 
                   />
-                  <span className="font-black text-black text-[10px] uppercase ml-1 shrink-0">Lakh</span>
+                  <span className="font-black text-black text-[8px] uppercase ml-0.5 shrink-0">Lakh</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Column 3: Collection Data & Calculations */}
+            <div className="divide-y-2 divide-black">
+              <div className="flex items-center p-0 h-10">
+                <span className="font-black text-black w-28 shrink-0 px-2 uppercase tracking-tighter">L.Y. Coll. -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-1">
+                  <input disabled={isOwnerView} 
+                    type="number" 
+                    value={sheet.lastYearCollection || ''} 
+                    onChange={e => updateSheet({ lastYearCollection: Number(e.target.value) })} 
+                    className="w-full bg-transparent font-black text-black focus:outline-none font-mono text-center" 
+                  />
+                  <span className="font-black text-black text-[8px] uppercase ml-0.5 shrink-0">Lakh</span>
+                </div>
+              </div>
+
+              <div className="flex items-center p-0 h-10 bg-amber-50">
+                <span className="font-black text-amber-900 w-28 shrink-0 px-2 uppercase tracking-tighter text-[9px]">Curr. L.Y. Outstd -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-1">
+                  <span className="w-full font-black text-amber-900 font-mono text-center">
+                    {(sheet.lastYearOutstanding - sheet.lastYearCollection).toFixed(2)}
+                  </span>
+                  <span className="font-black text-amber-900 text-[8px] uppercase ml-0.5 shrink-0">Lakh</span>
+                </div>
+              </div>
+
+              <div className="flex items-center p-0 h-10 bg-blue-50">
+                <span className="font-black text-blue-800 w-28 shrink-0 px-2 uppercase tracking-tighter">Coll. Target -</span>
+                <div className="flex-1 border-l-2 border-black h-full flex items-center justify-center px-1">
+                  <input disabled={isOwnerView} 
+                    type="number" 
+                    value={sheet.collectionPercent || ''} 
+                    onChange={e => updateSheet({ collectionPercent: Number(e.target.value) })} 
+                    className="w-full bg-transparent font-black text-blue-800 focus:outline-none font-mono text-center" 
+                  />
+                  <span className="font-black text-blue-800 text-[8px] uppercase ml-0.5 shrink-0">%</span>
                 </div>
               </div>
             </div>
@@ -485,7 +622,7 @@ export const TargetSheetView: React.FC<Props> = ({ profile, lang }) => {
                         <td className="p-1.5 border-r-2 border-black text-center font-black text-black">{idx + 1}</td>
                         <td className="p-1.5 border-r-2 border-black font-black uppercase text-center">{m.month}</td>
                         <td className="p-1 border-r-2 border-black">
-                          <input 
+                          <input disabled={isOwnerView} 
                             type="number" 
                             value={m.target || ''} 
                             onChange={e => updateMonth(idx, { target: Number(e.target.value) })}
@@ -494,7 +631,7 @@ export const TargetSheetView: React.FC<Props> = ({ profile, lang }) => {
                           />
                         </td>
                         <td className="p-1 border-r-2 border-black">
-                          <input 
+                          <input disabled={isOwnerView} 
                             type="number" 
                             value={m.achievement || ''} 
                             onChange={e => updateMonth(idx, { achievement: Number(e.target.value) })}
@@ -504,7 +641,7 @@ export const TargetSheetView: React.FC<Props> = ({ profile, lang }) => {
                         </td>
                         <td className="p-1.5 border-r-2 border-black text-center font-black font-mono">{achPercent.toFixed(1)}%</td>
                         <td className="p-1 border-r-2 border-black">
-                          <input 
+                          <input disabled={isOwnerView} 
                             type="number" 
                             value={m.collection || ''} 
                             onChange={e => updateMonth(idx, { collection: Number(e.target.value) })}
@@ -513,7 +650,7 @@ export const TargetSheetView: React.FC<Props> = ({ profile, lang }) => {
                           />
                         </td>
                         <td className="p-1 border-r-2 border-black">
-                          <input 
+                          <input disabled={isOwnerView} 
                             type="number" 
                             value={m.actualCollection || ''} 
                             onChange={e => updateMonth(idx, { actualCollection: Number(e.target.value) })}
