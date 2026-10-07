@@ -1,0 +1,300 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  collection, 
+  query, 
+  onSnapshot, 
+  doc, 
+  setDoc 
+} from 'firebase/firestore';
+import { db } from '../../firebase';
+import { UserProfile } from '../../lib/auth';
+import { softDeleteRecord, logAudit } from '../../lib/dataService';
+import { Language, translations } from '../../lib/i18n';
+import { 
+  ShoppingBag, 
+  Plus, 
+  Search, 
+  IndianRupee, 
+  CheckCircle, 
+  Clock, 
+  FileText, 
+  Trash2, 
+  X 
+} from 'lucide-react';
+
+interface OrderItem {
+  id: string;
+  orderNumber: string;
+  dealerName: string;
+  farmerName: string;
+  totalAmount: number;
+  paidAmount: number;
+  balanceAmount: number;
+  paymentMode: string;
+  status: 'pending' | 'confirmed' | 'delivered' | 'collected';
+  ownerId: string;
+  createdByName: string;
+  createdAt: string;
+  isArchived?: boolean;
+}
+
+interface Props {
+  profile: UserProfile;
+  lang: Language;
+}
+
+export const OrderCollectionView: React.FC<Props> = ({ profile, lang }) => {
+  const t = translations[lang];
+  const [orders, setOrders] = useState<OrderItem[]>([]);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [showModal, setShowModal] = useState(false);
+
+  // Form
+  const [dealerName, setDealerName] = useState('');
+  const [farmerName, setFarmerName] = useState('');
+  const [totalAmount, setTotalAmount] = useState('5000');
+  const [paidAmount, setPaidAmount] = useState('1000');
+  const [paymentMode, setPaymentMode] = useState('UPI / QR');
+  const [status, setStatus] = useState<OrderItem['status']>('confirmed');
+
+  useEffect(() => {
+    const q = query(collection(db, 'orders'));
+    const unsub = onSnapshot(q, (snap) => {
+      const list: OrderItem[] = [];
+      snap.forEach(d => {
+        const data = d.data() as OrderItem;
+        if (!data.isArchived) list.push({ id: d.id, ...data });
+      });
+      setOrders(list);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleCreateOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const id = `order_${Date.now()}`;
+    const tot = Number(totalAmount) || 0;
+    const paid = Number(paidAmount) || 0;
+    const balance = tot - paid;
+
+    const newOrder: OrderItem = {
+      id,
+      orderNumber: `BW-${Math.floor(100000 + Math.random() * 900000)}`,
+      dealerName: dealerName.trim() || 'General Dealer',
+      farmerName: farmerName.trim() || 'Direct Farmer',
+      totalAmount: tot,
+      paidAmount: paid,
+      balanceAmount: balance,
+      paymentMode,
+      status,
+      ownerId: profile.uid,
+      createdByName: profile.name,
+      createdAt: new Date().toISOString(),
+      isArchived: false,
+    };
+
+    await setDoc(doc(db, 'orders', id), newOrder);
+    await logAudit('CREATE', 'orders', id, `Created order ${newOrder.orderNumber} for ₹${tot}`, profile);
+
+    setShowModal(false);
+    setDealerName('');
+    setFarmerName('');
+  };
+
+  const handleDelete = async (order: OrderItem) => {
+    if (window.confirm(t.confirmDelete)) {
+      await softDeleteRecord('orders', order.id, order, profile);
+    }
+  };
+
+  const filtered = orders.filter(o => {
+    const matchSearch = o.dealerName.toLowerCase().includes(search.toLowerCase()) || o.orderNumber.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = statusFilter === 'all' || o.status === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+        <div>
+          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <ShoppingBag className="w-6 h-6 text-purple-600" />
+            {t.orderCollection}
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">ऑर्डर्स, देयके आणि पेमेंट कलेक्शन ट्रॅकिंग</p>
+        </div>
+        <button
+          onClick={() => setShowModal(true)}
+          className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition shadow-sm"
+        >
+          <Plus className="w-4 h-4" />
+          <span>नवीन ऑर्डर जोडा</span>
+        </button>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+          <input
+            type="text"
+            placeholder="ऑर्डर नंबर किंवा डीलरचे नाव शोधा..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-xs focus:outline-none"
+          />
+        </div>
+        <div className="flex gap-2">
+          {['all', 'pending', 'confirmed', 'delivered', 'collected'].map((st) => (
+            <button
+              key={st}
+              onClick={() => setStatusFilter(st)}
+              className={`px-3 py-2 rounded-xl text-xs font-bold capitalize transition ${statusFilter === st ? 'bg-purple-600 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
+            >
+              {st}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+          <ShoppingBag className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm font-semibold text-slate-700">कोणतीही ऑर्डर सापडली नाही</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filtered.map(o => (
+            <div key={o.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
+              <div className="flex justify-between items-start">
+                <div>
+                  <span className="text-[10px] font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded">
+                    {o.orderNumber}
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900 mt-1">{o.dealerName}</h3>
+                  <p className="text-xs text-slate-500">शेतकरी: {o.farmerName}</p>
+                </div>
+                <button onClick={() => handleDelete(o)} className="text-slate-400 hover:text-rose-600 p-1">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 py-2 border-y border-slate-100 text-xs">
+                <div>
+                  <span className="text-slate-400 block">एकूण</span>
+                  <span className="font-bold text-slate-800">₹{o.totalAmount.toLocaleString()}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">जमा</span>
+                  <span className="font-bold text-emerald-600">₹{o.paidAmount.toLocaleString()}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">शिल्लक</span>
+                  <span className="font-bold text-rose-600">₹{o.balanceAmount.toLocaleString()}</span>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center text-[11px] text-slate-500">
+                <span>पेमेंट मोड: <strong className="text-slate-700">{o.paymentMode}</strong></span>
+                <span className="uppercase font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">{o.status}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-slate-900">नवीन ऑर्डर नोंदवा</h3>
+              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+            </div>
+
+            <form onSubmit={handleCreateOrder} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">डीलर / कृषी केंद्र नाव *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="उदा. किसान कृषी सेवा केंद्र"
+                  value={dealerName}
+                  onChange={(e) => setDealerName(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">शेतकऱ्याचे नाव (पर्यायी)</label>
+                <input
+                  type="text"
+                  placeholder="उदा. रमेश पाटील"
+                  value={farmerName}
+                  onChange={(e) => setFarmerName(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">एकूण बिल रक्कम (₹) *</label>
+                  <input
+                    type="number"
+                    required
+                    value={totalAmount}
+                    onChange={(e) => setTotalAmount(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">आता जमा रक्कम (₹) *</label>
+                  <input
+                    type="number"
+                    required
+                    value={paidAmount}
+                    onChange={(e) => setPaidAmount(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">पेमेंट मोड</label>
+                  <select
+                    value={paymentMode}
+                    onChange={(e) => setPaymentMode(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
+                  >
+                    <option value="UPI / QR">UPI / QR Code</option>
+                    <option value="Cash">रोख (Cash)</option>
+                    <option value="Cheque">चेक (Cheque)</option>
+                    <option value="Credit">उधारी (Credit)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">ऑर्डर स्थिती</label>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as any)}
+                    className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="confirmed">Confirmed</option>
+                    <option value="delivered">Delivered</option>
+                    <option value="collected">Collected</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-2 flex gap-3">
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-2.5 rounded-xl border text-xs font-bold text-slate-600 hover:bg-slate-50">{t.cancel}</button>
+                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-xs font-bold text-white shadow-sm">{t.save}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

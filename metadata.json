@@ -1,0 +1,6 @@
+{
+  "name": "Blackworm Agritech",
+  "description": "Comprehensive agri-business management platform for tracking targets, orders, travel, and dealer relationships.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
